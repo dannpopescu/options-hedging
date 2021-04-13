@@ -6,14 +6,18 @@ class Critic(nn.Module):
     def __init__(self, input_dim):
         super(Critic, self).__init__()
 
-        self.input_layer = nn.Sequential(nn.BatchNorm1d(input_dim))
-        self.hidden_layer1 = nn.Sequential(nn.Linear(input_dim, 64, bias=False),
-                                           nn.BatchNorm1d(64),
-                                           nn.ReLU())
-        self.hidden_layer2 = nn.Sequential(nn.Linear(64, 64, bias=False),
-                                           nn.BatchNorm1d(64),
-                                           nn.ReLU())
-        self.output_layer = nn.Sequential(nn.Linear(64, 1))
+        hidden_dims = (64, 64)
+
+        self.nn = nn.Sequential(
+            nn.LayerNorm(input_dim),
+            nn.Linear(input_dim, hidden_dims[0]),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dims[0]),
+            nn.Linear(hidden_dims[0], hidden_dims[1]),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dims[1]),
+            nn.Linear(hidden_dims[1], 1)
+        )
 
         device = "cpu"
         if torch.cuda.is_available():
@@ -38,10 +42,7 @@ class Critic(nn.Module):
     def forward(self, state, action):
         x, u = self._format(state, action)
         x = torch.cat((x, u), dim=1)
-        x = self.input_layer(x)
-        x = self.hidden_layer1(x)
-        x = self.hidden_layer2(x)
-        return self.output_layer(x)
+        return self.nn(x)
 
     def load(self, experiences):
         states, actions, rewards, new_states, is_terminals = experiences
