@@ -34,7 +34,7 @@ class HedgingEnv(gym.Env):
         self.prev_state = []
         self.current_state = []
 
-        self.action_space = gym.spaces.Box(0, 1, shape=(1,), dtype=np.float64)
+        self.action_space = gym.spaces.Box(0, 1, shape=(1,))
 
     def reset(self):
         self.simulator.generate_new_path()

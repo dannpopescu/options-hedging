@@ -3,7 +3,6 @@ import glob
 import os
 import os.path
 import random
-import tempfile
 import time
 from itertools import count
 
@@ -109,7 +108,8 @@ class DDPG():
         return new_state, is_terminal
 
     def update_networks(self, tau=None):
-        tau = self.tau if tau is None else tau
+        if tau is None:
+            tau = self.tau
         self.mix_weights(tau, self.target_value_model, self.online_value_model)
         self.mix_weights(tau, self.target_policy_model, self.online_policy_model)
 
@@ -197,20 +197,20 @@ class DDPG():
             episode_elapsed = time.time() - episode_start
             self.episode_seconds.append(episode_elapsed)
             training_time += episode_elapsed
-            # evaluation_score, _ = self.evaluate(self.online_policy_model, self.env)
-            self.save_checkpoint(episode-1, self.online_policy_model)
+            evaluation_score, _ = self.evaluate(self.online_policy_model, self.env)
+            # self.save_checkpoint(episode-1, self.online_policy_model)
 
             total_step = int(np.sum(self.episode_timestep))
-            # self.evaluation_scores.append(evaluation_score)
+            self.evaluation_scores.append(evaluation_score)
 
             mean_10_reward = np.mean(self.episode_reward[-10:])
             std_10_reward = np.std(self.episode_reward[-10:])
             mean_100_reward = np.mean(self.episode_reward[-100:])
             std_100_reward = np.std(self.episode_reward[-100:])
-            mean_100_eval_score = 0
-            # mean_100_eval_score = np.mean(self.evaluation_scores[-100:])
-            std_100_eval_score = 0
-            # std_100_eval_score = np.std(self.evaluation_scores[-100:])
+            # mean_100_eval_score = 0
+            mean_100_eval_score = np.mean(self.evaluation_scores[-100:])
+            # std_100_eval_score = 0
+            std_100_eval_score = np.std(self.evaluation_scores[-100:])
             lst_100_exp_rat = np.array(
                 self.episode_exploration[-100:] ) /np.array(self.episode_timestep[-100:])
             mean_100_exp_rat = np.mean(lst_100_exp_rat)
@@ -221,9 +221,9 @@ class DDPG():
                                 mean_100_eval_score, training_time, wallclock_elapsed
 
             reached_debug_time = time.time() - last_debug_time >= LEAVE_PRINT_EVERY_N_SECS
-            reached_max_minutes = wallclock_elapsed >= max_minutes * 60
-            reached_max_episodes = episode >= max_episodes
-            reached_goal_mean_reward = mean_100_eval_score >= goal_mean_100_reward
+            reached_max_minutes = wallclock_elapsed >= MAX_MINUTES * 60
+            reached_max_episodes = episode >= MAX_EPISODES
+            reached_goal_mean_reward = mean_100_eval_score >= 0
             training_is_over = reached_max_minutes or \
                                reached_max_episodes or \
                                reached_goal_mean_reward
@@ -254,7 +254,7 @@ class DDPG():
               ' {:.2f}s wall-clock time.\n'.format(
             final_eval_score, score_std, training_time, wallclock_time))
         self.env.close() ; del self.env
-        self.get_cleaned_checkpoints()
+        # self.get_cleaned_checkpoints()
         return result, final_eval_score, training_time, wallclock_time
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):

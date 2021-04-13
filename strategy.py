@@ -14,7 +14,7 @@ class GreedyStrategy():
         model.train()
 
         action = np.clip(greedy_action, self.low, self.high)
-        return np.reshape(action, self.high.shape)
+        return action[0]
 
 
 class NormalNoiseStrategy():
