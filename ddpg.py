@@ -1,7 +1,4 @@
 import gc
-import glob
-import os
-import os.path
 import random
 import time
 from itertools import count
@@ -9,8 +6,8 @@ from itertools import count
 import numpy as np
 import torch
 
-from env import HedgingEnv
 from const import LEAVE_PRINT_EVERY_N_SECS, ERASE_LINE, MAX_EPISODES, MAX_MINUTES
+from env import HedgingEnv
 
 
 class DDPG():
