@@ -10,15 +10,19 @@ class Actor(nn.Module):
         super(Actor, self).__init__()
         self.env_min, self.env_max = action_bounds
 
-        self.input_layer = nn.Sequential(nn.BatchNorm1d(input_dim))
-        self.hidden_layer1 = nn.Sequential(nn.Linear(input_dim, 64, bias=False),
-                                           nn.BatchNorm1d(64),
-                                           nn.ReLU())
-        self.hidden_layer2 = nn.Sequential(nn.Linear(64, 64, bias=False),
-                                           nn.BatchNorm1d(64),
-                                           nn.ReLU())
-        self.output_layer = nn.Sequential(nn.Linear(64, output_dim),
-                                          nn.Tanh())
+        hidden_dims = (64, 64)
+
+        self.nn = nn.Sequential(
+            nn.LayerNorm(input_dim),
+            nn.Linear(input_dim, hidden_dims[0]),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dims[0]),
+            nn.Linear(hidden_dims[0], hidden_dims[1]),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dims[1]),
+            nn.Linear(hidden_dims[1], output_dim),
+            nn.Sigmoid
+        )
 
         device = "cpu"
         if torch.cuda.is_available():
@@ -26,19 +30,7 @@ class Actor(nn.Module):
         self.device = torch.device(device)
         self.to(self.device)
 
-        self.env_min = torch.tensor(self.env_min,
-                                    device=self.device,
-                                    dtype=torch.float32)
-
-        self.env_max = torch.tensor(self.env_max,
-                                    device=self.device,
-                                    dtype=torch.float32)
-
-        self.nn_min = nn.Tanh()(torch.Tensor([float('-inf')])).to(self.device)
-        self.nn_max = nn.Tanh()(torch.Tensor([float('inf')])).to(self.device)
-
-        self.rescale_fn = lambda x: (x - self.nn_min) * (self.env_max - self.env_min) / \
-                                    (self.nn_max - self.nn_min) + self.env_min
+        self.rescale_fn = lambda x: x * self.env_max
 
     def _format(self, state):
         x = state
@@ -51,8 +43,5 @@ class Actor(nn.Module):
 
     def forward(self, state):
         x = self._format(state)
-        x = self.input_layer(x)
-        x = self.hidden_layer1(x)
-        x = self.hidden_layer2(x)
-        x = self.output_layer(x)
+        x = self.nn(x)
         return self.rescale_fn(x)
