@@ -198,7 +198,6 @@ class DDPG():
             self.episode_seconds.append(episode_elapsed)
             training_time += episode_elapsed
             evaluation_score, _ = self.evaluate(self.online_policy_model, self.env)
-            # self.save_checkpoint(episode-1, self.online_policy_model)
 
             total_step = int(np.sum(self.episode_timestep))
             self.evaluation_scores.append(evaluation_score)
@@ -254,7 +253,6 @@ class DDPG():
               ' {:.2f}s wall-clock time.\n'.format(
             final_eval_score, score_std, training_time, wallclock_time))
         self.env.close() ; del self.env
-        # self.get_cleaned_checkpoints()
         return result, final_eval_score, training_time, wallclock_time
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):
@@ -268,27 +266,3 @@ class DDPG():
                 rs[-1] += r
                 if d: break
         return np.mean(rs), np.std(rs)
-
-    def get_cleaned_checkpoints(self, n_checkpoints=4):
-        try:
-            return self.checkpoint_paths
-        except AttributeError:
-            self.checkpoint_paths = {}
-
-        paths = glob.glob(os.path.join(self.checkpoint_dir, '*.tar'))
-        paths_dic = {int(path.split('.')[-2]) :path for path in paths}
-        last_ep = max(paths_dic.keys())
-        # checkpoint_idxs = np.geomspace(1, last_ep+1, n_checkpoints, endpoint=True, dtype=np.int)-1
-        checkpoint_idxs = np.linspace(1, last_ep+1, n_checkpoints, endpoint=True, dtype=np.int ) -1
-
-        for idx, path in paths_dic.items():
-            if idx in checkpoint_idxs:
-                self.checkpoint_paths[idx] = path
-            else:
-                os.unlink(path)
-
-        return self.checkpoint_paths
-
-    def save_checkpoint(self, episode_idx, model):
-        torch.save(model.state_dict(),
-                   os.path.join(self.checkpoint_dir, 'model.{}.tar'.format(episode_idx)))
