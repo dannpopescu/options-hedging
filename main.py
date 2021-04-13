@@ -5,8 +5,9 @@ from actor import Actor
 from critic import Critic
 from strategy import NormalNoiseStrategy
 from strategy import GreedyStrategy
-from buffer import ReplayBuffer
 from ddpg import DDPG
+from baselines.replay_buffer import PrioritizedReplayBuffer
+from baselines.schedules import LinearSchedule
 
 SEEDS = (17,)
 
@@ -35,7 +36,17 @@ value_optimizer_lr = 0.001
 training_strategy_fn = lambda bounds: NormalNoiseStrategy(bounds, exploration_noise_ratio=0.1)
 evaluation_strategy_fn = lambda bounds: GreedyStrategy(bounds)
 
-replay_buffer_fn = lambda: ReplayBuffer(max_size=100000, batch_size=256)
+# replay_buffer_fn = lambda: ReplayBuffer(max_size=100000, batch_size=256)
+replay_buffer_alpha = 0.6
+replay_buffer_fn = lambda: PrioritizedReplayBuffer(500_000, replay_buffer_alpha)
+replay_buffer_init_beta = 0.4
+replay_buffer_beta_steps = 50000
+replay_buffer_beta_schedule_fn = lambda: LinearSchedule(replay_buffer_beta_steps,
+                                                     final_p=1.0,
+                                                     initial_p=replay_buffer_init_beta)
+
+batch_size = 128
+
 n_warmup_batches = 5
 update_target_every_steps = 1
 tau = 0.001
@@ -43,6 +54,7 @@ tau = 0.001
 gamma, max_minutes, max_episodes, goal_mean_100_reward = environment_settings.values()
 
 agent = DDPG(replay_buffer_fn,
+             replay_buffer_beta_schedule_fn,
              policy_model_fn,
              policy_max_grad_norm,
              policy_optimizer_fn,
@@ -53,11 +65,13 @@ agent = DDPG(replay_buffer_fn,
              value_optimizer_lr,
              training_strategy_fn,
              evaluation_strategy_fn,
+             batch_size,
              n_warmup_batches,
              update_target_every_steps,
-             tau)
+             tau,
+             gamma)
 
-result, final_eval_score, training_time, wallclock_time = agent.train(seed, gamma, max_minutes, max_episodes, goal_mean_100_reward)
+result, final_eval_score, training_time, wallclock_time = agent.train(seed)
 
 ddpg_results.append(result)
 # if final_eval_score > best_eval_score:

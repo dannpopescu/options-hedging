@@ -17,6 +17,7 @@ from const import LEAVE_PRINT_EVERY_N_SECS, ERASE_LINE, MAX_EPISODES, MAX_MINUTE
 class DDPG():
     def __init__(self,
                  replay_buffer_fn,
+                 per_beta_schedule_fn,
                  policy_model_fn,
                  policy_max_grad_norm,
                  policy_optimizer_fn,
@@ -27,11 +28,13 @@ class DDPG():
                  value_optimizer_lr,
                  training_strategy_fn,
                  evaluation_strategy_fn,
+                 batch_size,
                  n_warmup_batches,
                  update_target_every_steps,
                  tau,
                  gamma):
         self.replay_buffer_fn = replay_buffer_fn
+        self.per_beta_schedule_fn = per_beta_schedule_fn
 
         self.policy_model_fn = policy_model_fn
         self.policy_max_grad_norm = policy_max_grad_norm
@@ -46,7 +49,10 @@ class DDPG():
         self.training_strategy_fn = training_strategy_fn
         self.evaluation_strategy_fn = evaluation_strategy_fn
 
+        self.batch_size = batch_size
         self.n_warmup_batches = n_warmup_batches
+        self.min_samples = batch_size * n_warmup_batches
+
         self.update_target_every_steps = update_target_every_steps
         self.tau = tau
 
@@ -54,7 +60,7 @@ class DDPG():
 
         self.is_equals = []
 
-    def optimize_model(self, experiences):
+    def optimize_model(self, experiences, weights=None, idxes=None):
         states, actions, rewards, next_states, is_terminals = experiences
 
         argmax_a_q_sp = self.target_policy_model(next_states)
@@ -62,7 +68,10 @@ class DDPG():
         target_q_sa = rewards + self.gamma * max_a_q_sp * (1 - is_terminals)
         q_sa = self.online_value_model(states, actions)
         td_error = q_sa - target_q_sa.detach()
-        value_loss = td_error.pow(2).mul(0.5).mean()
+        if weights is not None:
+            value_loss = (weights * td_error).pow(2).mul(0.5).mean()
+        else:
+            value_loss = td_error.pow(2).mul(0.5).mean()
         self.value_optimizer.zero_grad()
         value_loss.backward()
         # clip the gradients to obtain the Huber Loss.
@@ -71,6 +80,9 @@ class DDPG():
         torch.nn.utils.clip_grad_norm_(self.online_value_model.parameters(),
                                        self.value_max_grad_norm)
         self.value_optimizer.step()
+        if idxes is not None:
+            priorities = np.abs(td_error.detach().cpu().numpy() + 1e-10)  # 1e-10 to avoid zero priority
+            self.replay_buffer.update_priorities(idxes, priorities)
 
         argmax_a_q_s = self.online_policy_model(states)
         max_a_q_s = self.online_value_model(states, argmax_a_q_s)
@@ -82,17 +94,15 @@ class DDPG():
         self.policy_optimizer.step()
 
     def interaction_step(self, state):
-        min_samples = self.replay_buffer.batch_size * self.n_warmup_batches
-        if len(self.replay_buffer) < min_samples:
+        if len(self.replay_buffer) < self.min_samples:
             action = self.env.action_space.sample()[0]
         else:
             action = self.training_strategy.select_action(self.online_policy_model,
                                                       state,
-                                                      len(self.replay_buffer) < min_samples)
+                                                      len(self.replay_buffer) < self.min_samples)
 
         new_state, reward, is_terminal, info = self.env.step(action)
-        experience = (state, action, reward, new_state, is_terminal)
-        self.replay_buffer.store(experience)
+        self.replay_buffer.add(state, action, reward, new_state, is_terminal)
         self.episode_reward[-1] += reward
         self.episode_timestep[-1] += 1
         self.episode_exploration[-1] += self.training_strategy.ratio_noise_injected
@@ -149,13 +159,16 @@ class DDPG():
                                                          self.policy_optimizer_lr)
 
         self.replay_buffer = self.replay_buffer_fn()
+        self.per_beta_schedule = self.per_beta_schedule_fn()
         self.training_strategy = self.training_strategy_fn(action_bounds)
         self.evaluation_strategy = self.evaluation_strategy_fn(action_bounds)
 
         result = np.empty((MAX_EPISODES, 5))
         result[:] = np.nan
         training_time = 0
-        for episode in range(1, MAX_EPISODES + 1):
+        for episode in range(MAX_EPISODES):
+
+            self.t = episode
             episode_start = time.time()
 
             state, is_terminal = self.env.reset(), False
@@ -166,11 +179,12 @@ class DDPG():
             while True:
                 state, is_terminal = self.interaction_step(state)
 
-                min_samples = self.replay_buffer.batch_size * self.n_warmup_batches
-                if len(self.replay_buffer) > min_samples:
-                    experiences = self.replay_buffer.sample()
+                if len(self.replay_buffer) > self.min_samples:
+                    replay_buffer_sample = self.replay_buffer.sample(self.batch_size,
+                                                                     beta=self.per_beta_schedule.value(self.t))
+                    *experiences, weights, idxes = replay_buffer_sample
                     experiences = self.online_value_model.load(experiences)
-                    self.optimize_model(experiences)
+                    self.optimize_model(experiences, weights, idxes)
 
                 if np.sum(self.episode_timestep) % self.update_target_every_steps == 0:
                     self.update_networks()
