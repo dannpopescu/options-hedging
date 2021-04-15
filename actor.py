@@ -21,7 +21,7 @@ class Actor(nn.Module):
             nn.ReLU(),
             nn.LayerNorm(hidden_dims[1]),
             nn.Linear(hidden_dims[1], output_dim),
-            nn.Sigmoid
+            nn.Sigmoid()
         )
 
         device = "cpu"
@@ -29,6 +29,14 @@ class Actor(nn.Module):
             device = "cuda:0"
         self.device = torch.device(device)
         self.to(self.device)
+
+        self.env_min = torch.tensor(self.env_min,
+                                    device=self.device,
+                                    dtype=torch.float32)
+
+        self.env_max = torch.tensor(self.env_max,
+                                    device=self.device,
+                                    dtype=torch.float32)
 
         self.rescale_fn = lambda x: x * self.env_max
 
