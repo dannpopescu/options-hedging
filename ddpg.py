@@ -65,6 +65,7 @@ class DDPG():
         q_sa = self.online_value_model(states, actions)
         td_error = q_sa - target_q_sa.detach()
         if weights is not None:
+            weights = torch.tensor(weights, dtype=torch.float32, device=self.target_value_model.device).unsqueeze(1)
             value_loss = (weights * td_error).pow(2).mul(0.5).mean()
         else:
             value_loss = td_error.pow(2).mul(0.5).mean()
@@ -216,7 +217,8 @@ class DDPG():
             reached_debug_time = time.time() - last_debug_time >= LEAVE_PRINT_EVERY_N_SECS
             reached_max_minutes = wallclock_elapsed >= MAX_MINUTES * 60
             reached_max_episodes = episode >= MAX_EPISODES
-            reached_goal_mean_reward = mean_100_eval_score >= 0
+            # reached_goal_mean_reward = mean_100_eval_score >= 0
+            reached_goal_mean_reward = False
             training_is_over = reached_max_minutes or \
                                reached_max_episodes or \
                                reached_goal_mean_reward
