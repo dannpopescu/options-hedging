@@ -90,18 +90,15 @@ class DDPG():
         self.policy_optimizer.step()
 
     def interaction_step(self, state):
-        if len(self.replay_buffer) < self.min_samples:
-            action = self.env.action_space.sample()[0]
-        else:
-            action = self.training_strategy.select_action(self.online_policy_model,
+        action = self.training_strategy.select_action(self.online_policy_model,
                                                       state,
-                                                      len(self.replay_buffer) < self.min_samples)
+                                                      self.env)
 
         new_state, reward, is_terminal, info = self.env.step(action)
         self.replay_buffer.add(state, action, reward, new_state, is_terminal)
         self.episode_reward[-1] += reward
         self.episode_timestep[-1] += 1
-        self.episode_exploration[-1] += self.training_strategy.ratio_noise_injected
+        # self.episode_exploration[-1] += self.training_strategy.ratio_noise_injected
         return new_state, is_terminal
 
     def update_networks(self, tau=None):
@@ -157,8 +154,8 @@ class DDPG():
 
         self.replay_buffer = self.replay_buffer_fn()
         self.per_beta_schedule = self.per_beta_schedule_fn()
-        self.training_strategy = self.training_strategy_fn(action_bounds)
-        self.evaluation_strategy = self.evaluation_strategy_fn(action_bounds)
+        self.training_strategy = self.training_strategy_fn()
+        self.evaluation_strategy = self.evaluation_strategy_fn()
 
         result = np.empty((MAX_EPISODES, 5))
         result[:] = np.nan

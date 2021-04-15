@@ -3,18 +3,8 @@ import numpy as np
 
 
 class GreedyStrategy():
-    def __init__(self, bounds):
-        self.low, self.high = bounds
-        self.ratio_noise_injected = 0
-
     def select_action(self, model, state):
-        model.eval()
-        with torch.no_grad():
-            greedy_action = model(state).cpu().detach().data.numpy().squeeze()
-        model.train()
-
-        action = np.clip(greedy_action, self.low, self.high)
-        return action[0]
+        return get_greedy_action(model, state)
 
 
 class NormalNoiseStrategy():
@@ -48,3 +38,33 @@ class NormalNoiseStrategy():
 
         self.ratio_noise_injected = np.mean(abs((greedy_action - action ) /(self.high - self.low)))
         return action[0]
+
+
+class EGreedyExpStrategy():
+    def __init__(self, init_epsilon=1.0, min_epsilon=0.1, decay_steps=20000, epsilon_decay=0.9999):
+        self.init_epsilon = init_epsilon
+        self.min_epsilon = min_epsilon
+        self.epsilon = init_epsilon
+        self.epsilon_decay = epsilon_decay
+
+    def epsilon_update(self):
+        if self.epsilon > self.min_epsilon:
+            self.epsilon *= self.epsilon_decay
+
+    def select_action(self, model, state, env):
+        is_exploratory = False
+        if np.random.rand() > self.epsilon:
+            action = get_greedy_action(model, state)
+        else:
+            action = env.action_space.sample()[0]
+            is_exploratory = True
+
+        return action, is_exploratory
+
+
+def get_greedy_action(model, state):
+    model.eval()
+    with torch.no_grad():
+        greedy_action = model(state).detach().cpu().data.numpy()[0][0]
+    model.train()
+    return greedy_action

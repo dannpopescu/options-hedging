@@ -3,8 +3,8 @@ import numpy as np
 
 from actor import Actor
 from critic import Critic
-from strategy import NormalNoiseStrategy
 from strategy import GreedyStrategy
+from strategy import EGreedyExpStrategy
 from ddpg import DDPG
 from baselines.replay_buffer import PrioritizedReplayBuffer
 from baselines.schedules import LinearSchedule
@@ -33,8 +33,9 @@ value_max_grad_norm = float('inf')
 value_optimizer_fn = lambda net, lr: optim.Adam(net.parameters(), lr=lr)
 value_optimizer_lr = 0.001
 
-training_strategy_fn = lambda bounds: NormalNoiseStrategy(bounds, exploration_noise_ratio=0.1)
-evaluation_strategy_fn = lambda bounds: GreedyStrategy(bounds)
+# training_strategy_fn = lambda bounds: NormalNoiseStrategy(bounds, exploration_noise_ratio=0.1)
+training_strategy_fn = lambda: EGreedyExpStrategy(init_epsilon=1, min_epsilon=0.1, epsilon_decay=0.99994)
+evaluation_strategy_fn = lambda: GreedyStrategy()
 
 # replay_buffer_fn = lambda: ReplayBuffer(max_size=100000, batch_size=256)
 replay_buffer_alpha = 0.6
