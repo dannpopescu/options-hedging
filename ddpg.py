@@ -5,56 +5,83 @@ from itertools import count
 
 import numpy as np
 import torch
+from torch.optim import Adam
 
+from actor import Actor
+from baselines.replay_buffer import PrioritizedReplayBuffer
+from baselines.schedules import LinearSchedule
 from const import LEAVE_PRINT_EVERY_N_SECS, ERASE_LINE, MAX_EPISODES, MAX_MINUTES
+from critic import Critic
 from env import HedgingEnv
+
+from strategy import EGreedyExpStrategy
 
 
 class DDPG():
-    def __init__(self,
-                 replay_buffer_fn,
-                 per_beta_schedule_fn,
-                 policy_model_fn,
-                 policy_max_grad_norm,
-                 policy_optimizer_fn,
-                 policy_optimizer_lr,
-                 value_model_fn,
-                 value_max_grad_norm,
-                 value_optimizer_fn,
-                 value_optimizer_lr,
-                 training_strategy_fn,
-                 evaluation_strategy_fn,
-                 batch_size,
-                 n_warmup_batches,
-                 update_target_every_steps,
-                 tau,
-                 gamma):
-        self.replay_buffer_fn = replay_buffer_fn
-        self.per_beta_schedule_fn = per_beta_schedule_fn
+    def __init__(self, seed):
 
-        self.policy_model_fn = policy_model_fn
-        self.policy_max_grad_norm = policy_max_grad_norm
-        self.policy_optimizer_fn = policy_optimizer_fn
-        self.policy_optimizer_lr = policy_optimizer_lr
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
 
-        self.value_model_fn = value_model_fn
-        self.value_max_grad_norm = value_max_grad_norm
-        self.value_optimizer_fn = value_optimizer_fn
-        self.value_optimizer_lr = value_optimizer_lr
+        # Trading environment
+        self.env = HedgingEnv(init_price=100,
+                              mu=0.05,
+                              sigma=0.2,
+                              strike_price=100,
+                              r=0,
+                              q=0,
+                              trading_freq=1,
+                              maturity=0.5,
+                              trading_cost=0.01,
+                              seed=seed)
 
-        self.training_strategy_fn = training_strategy_fn
-        self.evaluation_strategy_fn = evaluation_strategy_fn
+        action_bounds = self.env.action_space.low, self.env.action_space.high
+        state_space, action_space = 3, 1
 
-        self.batch_size = batch_size
-        self.n_warmup_batches = n_warmup_batches
-        self.min_samples = batch_size * n_warmup_batches
+        # Policy model - actor
+        self.target_policy_model = Actor(input_dim=state_space,
+                                         output_dim=action_space,
+                                         action_bounds=action_bounds)
+        self.online_policy_model = Actor(input_dim=state_space,
+                                         output_dim=action_space,
+                                         action_bounds=action_bounds)
 
-        self.update_target_every_steps = update_target_every_steps
-        self.tau = tau
+        # Value model - critic
+        self.target_value_model = Critic(input_dim=state_space + action_space)
+        self.online_value_model = Critic(input_dim=state_space + action_space)
 
-        self.gamma = gamma
+        # Use Huber loss: 0 - MAE, inf - MSE
+        self.policy_max_grad_norm = float('inf')
+        self.value_max_grad_norm = float('inf')
 
-        self.is_equals = []
+        # Copy networks' parameters from online to target
+        self.update_networks(tau=1.0)
+
+        # Use Polyak averaging - mix the target network with a fraction of online network
+        self.tau = 0.0001
+        self.update_target_every_steps = 1
+
+        # Optimizers
+        self.policy_optimizer = Adam(params=self.online_policy_model.parameters(),
+                                     lr=1e-4)
+        self.value_optimizer = Adam(params=self.online_value_model.parameters(),
+                                    lr=1e-4)
+
+        # Use Prioritized Experience Replay - PER as the replay buffer
+        self.replay_buffer = PrioritizedReplayBuffer(size=600_000,
+                                                     alpha=0.6)
+        self.per_beta_schedule = LinearSchedule(schedule_timesteps=50_000,
+                                                final_p=1.0,
+                                                initial_p=0.4)
+
+        # Training strategy
+        self.training_strategy = EGreedyExpStrategy(init_epsilon=1,
+                                                    min_epsilon=0.1,
+                                                    epsilon_decay=0.99994)
+
+        self.batch_size = 128
+        self.gamma = 0
 
     def optimize_model(self, experiences, weights=None, idxes=None):
         states, actions, rewards, next_states, is_terminals = experiences
@@ -71,9 +98,6 @@ class DDPG():
             value_loss = td_error.pow(2).mul(0.5).mean()
         self.value_optimizer.zero_grad()
         value_loss.backward()
-        # clip the gradients to obtain the Huber Loss.
-        # self.value_max_grad_norm can be virtually any value, but know that this interacts with other hyperparameters,
-        # such as learning rate
         torch.nn.utils.clip_grad_norm_(self.online_value_model.parameters(),
                                        self.value_max_grad_norm)
         self.value_optimizer.step()
@@ -119,44 +143,11 @@ class DDPG():
     def train(self, seed):
         training_start, last_debug_time = time.time(), float('-inf')
 
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        random.seed(seed)
-
-        self.env = HedgingEnv(init_price=100,
-                              mu=0.05,
-                              sigma=0.2,
-                              strike_price=100,
-                              r=0,
-                              q=0,
-                              trading_freq=1,
-                              maturity=0.5,
-                              trading_cost=0.01,
-                              seed=seed)
-
-        nS, nA = 3, 1
-        action_bounds = self.env.action_space.low, self.env.action_space.high
-
         self.episode_timestep = []
         self.episode_reward = []
         self.episode_seconds = []
         self.evaluation_scores = []
         self.episode_exploration = []
-
-        self.target_value_model = self.value_model_fn(nS, nA)
-        self.online_value_model = self.value_model_fn(nS, nA)
-        self.target_policy_model = self.policy_model_fn(nS, action_bounds)
-        self.online_policy_model = self.policy_model_fn(nS, action_bounds)
-        self.update_networks(tau=1.0)
-        self.value_optimizer = self.value_optimizer_fn(self.online_value_model,
-                                                       self.value_optimizer_lr)
-        self.policy_optimizer = self.policy_optimizer_fn(self.online_policy_model,
-                                                         self.policy_optimizer_lr)
-
-        self.replay_buffer = self.replay_buffer_fn()
-        self.per_beta_schedule = self.per_beta_schedule_fn()
-        self.training_strategy = self.training_strategy_fn()
-        self.evaluation_strategy = self.evaluation_strategy_fn()
 
         result = np.empty((MAX_EPISODES, 5))
         result[:] = np.nan
@@ -174,12 +165,11 @@ class DDPG():
             while True:
                 state, is_terminal = self.interaction_step(state)
 
-                if len(self.replay_buffer) > self.min_samples:
-                    replay_buffer_sample = self.replay_buffer.sample(self.batch_size,
-                                                                     beta=self.per_beta_schedule.value(self.t))
-                    *experiences, weights, idxes = replay_buffer_sample
-                    experiences = self.online_value_model.load(experiences)
-                    self.optimize_model(experiences, weights, idxes)
+                replay_buffer_sample = self.replay_buffer.sample(self.batch_size,
+                                                                 beta=self.per_beta_schedule.value(self.t))
+                *experiences, weights, idxes = replay_buffer_sample
+                experiences = self.online_value_model.load(experiences)
+                self.optimize_model(experiences, weights, idxes)
 
                 if np.sum(self.episode_timestep) % self.update_target_every_steps == 0:
                     self.update_networks()
