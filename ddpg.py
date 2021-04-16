@@ -215,6 +215,17 @@ class DDPG():
                 print(ERASE_LINE + debug_message, flush=True)
                 last_debug_time = time.time()
 
+            if episode % 1000 == 0:
+                torch.save({
+                    'episode': episode,
+                    'online_policy_state_dict': self.online_policy_model.state_dict(),
+                    'target_policy_state_dict': self.target_policy_model.state_dict(),
+                    'online_value_state_dict': self.online_value_model.state_dict(),
+                    'target_value_state_dict': self.target_value_model.state_dict(),
+                    'policy_optimizer_state_dict': self.policy_optimizer.state_dict(),
+                    'value_optimizer_state_dict': self.value_optimizer.state_dict(),
+                }, 'model/ddpg' + str(int(episode / 1000)) + ".pt")
+
         return result, training_time, wallclock_elapsed
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):
