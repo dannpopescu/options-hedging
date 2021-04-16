@@ -10,16 +10,16 @@ class Actor(nn.Module):
         super(Actor, self).__init__()
         self.env_min, self.env_max = action_bounds
 
-        hidden_dims = (64, 64)
+        hidden_dims = (32, 64)
 
         self.nn = nn.Sequential(
-            nn.LayerNorm(input_dim),
+            nn.BatchNorm1d(input_dim),
             nn.Linear(input_dim, hidden_dims[0]),
             nn.ReLU(),
-            nn.LayerNorm(hidden_dims[0]),
+            nn.BatchNorm1d(hidden_dims[0]),
             nn.Linear(hidden_dims[0], hidden_dims[1]),
             nn.ReLU(),
-            nn.LayerNorm(hidden_dims[1]),
+            nn.BatchNorm1d(hidden_dims[1]),
             nn.Linear(hidden_dims[1], output_dim),
             nn.Sigmoid()
         )

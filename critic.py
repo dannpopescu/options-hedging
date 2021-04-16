@@ -6,16 +6,16 @@ class Critic(nn.Module):
     def __init__(self, input_dim):
         super(Critic, self).__init__()
 
-        hidden_dims = (64, 64)
+        hidden_dims = (32, 64)
 
         self.nn = nn.Sequential(
-            nn.LayerNorm(input_dim),
+            nn.BatchNorm1d(input_dim),
             nn.Linear(input_dim, hidden_dims[0]),
             nn.ReLU(),
-            nn.LayerNorm(hidden_dims[0]),
+            nn.BatchNorm1d(hidden_dims[0]),
             nn.Linear(hidden_dims[0], hidden_dims[1]),
             nn.ReLU(),
-            nn.LayerNorm(hidden_dims[1]),
+            nn.BatchNorm1d(hidden_dims[1]),
             nn.Linear(hidden_dims[1], 1)
         )
 
