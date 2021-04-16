@@ -2,7 +2,7 @@ import gym
 import numpy as np
 
 from simulator import GBMSimulator
-from const import STOCK, OPTONS, TTM, DONE, HOLDING, SHARES_PER_CONTRACT
+from const import STOCK, OPTONS, TTM, DONE, HOLDING, SHARES_PER_CONTRACT, DELTA
 
 
 class HedgingEnv(gym.Env):
@@ -52,19 +52,24 @@ class HedgingEnv(gym.Env):
         self.current_state[HOLDING] = asset_to_be_held
 
         observation = [self.current_state[HOLDING], self.current_state[STOCK], self.current_state[TTM]]
-        reward = self.compute_reward()
+        reward = self.compute_reward(self.current_state[HOLDING], self.prev_state[HOLDING])
 
-        return [observation, reward, self.current_state[DONE], []]
+        crt_delta_holding = self.current_state[DELTA] * SHARES_PER_CONTRACT
+        prev_delta_holding = self.prev_state[DELTA] * SHARES_PER_CONTRACT if self.simulator.current_step > 2 else 0
+        delta_reward = self.compute_reward(crt_delta_holding, prev_delta_holding)
+        info = {"delta_action": crt_delta_holding, "delta_reward": delta_reward}
 
-    def compute_reward(self):
+        return [observation, reward, self.current_state[DONE], info]
+
+    def compute_reward(self, crt_holding, prev_holding):
         options_value_change = (self.current_state[OPTONS] - self.prev_state[OPTONS]) * SHARES_PER_CONTRACT
-        stock_position_change = self.current_state[HOLDING] * (self.current_state[STOCK] - self.prev_state[STOCK])
-        transaction_cost = self.trading_cost * np.abs(self.prev_state[STOCK] * (self.current_state[HOLDING] - self.prev_state[HOLDING]))
+        stock_position_change = crt_holding * (self.current_state[STOCK] - self.prev_state[STOCK])
+        transaction_cost = self.trading_cost * np.abs(self.prev_state[STOCK] * (crt_holding - prev_holding))
 
         reward = -options_value_change + stock_position_change - transaction_cost
 
         if self.current_state[DONE]:
-            reward -= self.trading_cost * np.abs(self.current_state[HOLDING] * self.current_state[STOCK])  # liquidate the hedge
+            reward -= self.trading_cost * np.abs(crt_holding * self.current_state[STOCK])  # liquidate the hedge
 
         return -np.abs(reward)
 
