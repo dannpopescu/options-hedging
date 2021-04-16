@@ -162,13 +162,14 @@ class DDPG():
             for step in count():
                 state, is_terminal = self.interaction_step(state)
 
-                *experiences, weights, idxs = self.replay_buffer.sample(self.batch_size,
-                                                                         beta=self.per_beta_schedule.value(episode))
-                experiences = self.online_value_model.load(experiences)
-                self.optimize_model(experiences, weights, idxs)
+                if len(self.replay_buffer) > self.batch_size:
+                    *experiences, weights, idxs = self.replay_buffer.sample(self.batch_size,
+                                                                            beta=self.per_beta_schedule.value(episode))
+                    experiences = self.online_value_model.load(experiences)
+                    self.optimize_model(experiences, weights, idxs)
 
-                if step % self.update_target_every_steps == 0:
-                    self.update_networks()
+                    if step % self.update_target_every_steps == 0:
+                        self.update_networks()
 
                 if is_terminal:
                     gc.collect()
