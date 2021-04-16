@@ -14,7 +14,7 @@ from const import LEAVE_PRINT_EVERY_N_SECS, ERASE_LINE, MAX_EPISODES, MAX_MINUTE
 from critic import Critic
 from env import HedgingEnv
 
-from strategy import EGreedyExpStrategy
+from strategy import EGreedyExpStrategy, GreedyStrategy
 
 
 class DDPG():
@@ -79,11 +79,12 @@ class DDPG():
         self.training_strategy = EGreedyExpStrategy(init_epsilon=1,
                                                     min_epsilon=0.1,
                                                     epsilon_decay=0.99994)
+        self.evaluation_strategy = GreedyStrategy()
 
         self.batch_size = 128
         self.gamma = 0
 
-    def optimize_model(self, experiences, weights=None, idxes=None):
+    def optimize_model(self, experiences, weights, idxs):
         states, actions, rewards, next_states, is_terminals = experiences
 
         argmax_a_q_sp = self.target_policy_model(next_states)
@@ -91,19 +92,15 @@ class DDPG():
         target_q_sa = rewards + self.gamma * max_a_q_sp * (1 - is_terminals)
         q_sa = self.online_value_model(states, actions)
         td_error = q_sa - target_q_sa.detach()
-        if weights is not None:
-            weights = torch.tensor(weights, dtype=torch.float32, device=self.target_value_model.device).unsqueeze(1)
-            value_loss = (weights * td_error).pow(2).mul(0.5).mean()
-        else:
-            value_loss = td_error.pow(2).mul(0.5).mean()
+        weights = torch.tensor(weights, dtype=torch.float32, device=self.target_value_model.device).unsqueeze(1)
+        value_loss = (weights * td_error).pow(2).mul(0.5).mean()
         self.value_optimizer.zero_grad()
         value_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.online_value_model.parameters(),
                                        self.value_max_grad_norm)
         self.value_optimizer.step()
-        if idxes is not None:
-            priorities = np.abs(td_error.detach().cpu().numpy() + 1e-10)  # 1e-10 to avoid zero priority
-            self.replay_buffer.update_priorities(idxes, priorities)
+        priorities = np.abs(td_error.detach().cpu().numpy() + 1e-10)  # 1e-10 to avoid zero priority
+        self.replay_buffer.update_priorities(idxs, priorities)
 
         argmax_a_q_s = self.online_policy_model(states)
         max_a_q_s = self.online_value_model(states, argmax_a_q_s)
@@ -115,15 +112,15 @@ class DDPG():
         self.policy_optimizer.step()
 
     def interaction_step(self, state):
-        action = self.training_strategy.select_action(self.online_policy_model,
-                                                      state,
-                                                      self.env)
-
+        action, is_exploratory = self.training_strategy.select_action(self.online_policy_model,
+                                                                      state,
+                                                                      self.env)
         new_state, reward, is_terminal, info = self.env.step(action)
         self.replay_buffer.add(state, action, reward, new_state, is_terminal)
+
         self.episode_reward[-1] += reward
-        self.episode_timestep[-1] += 1
-        # self.episode_exploration[-1] += self.training_strategy.ratio_noise_injected
+        self.episode_exploration[-1] += int(is_exploratory)
+
         return new_state, is_terminal
 
     def update_networks(self, tau=None):
@@ -140,106 +137,83 @@ class DDPG():
             mixed_weights = target_ratio + online_ratio
             target.data.copy_(mixed_weights)
 
-    def train(self, seed):
+    def train(self, episodes):
         training_start, last_debug_time = time.time(), float('-inf')
 
-        self.episode_timestep = []
         self.episode_reward = []
-        self.episode_seconds = []
-        self.evaluation_scores = []
         self.episode_exploration = []
+        self.episode_seconds = []
 
-        result = np.empty((MAX_EPISODES, 5))
+        result = np.empty((episodes, 4))
         result[:] = np.nan
         training_time = 0
-        for episode in range(MAX_EPISODES):
 
-            self.t = episode
+        self.path_length = self.env.simulator.days_to_maturity()
+
+        for episode in range(episodes):
+
             episode_start = time.time()
 
             state, is_terminal = self.env.reset(), False
+
             self.episode_reward.append(0.0)
-            self.episode_timestep.append(0.0)
             self.episode_exploration.append(0.0)
 
-            while True:
+            for step in count():
                 state, is_terminal = self.interaction_step(state)
 
-                replay_buffer_sample = self.replay_buffer.sample(self.batch_size,
-                                                                 beta=self.per_beta_schedule.value(self.t))
-                *experiences, weights, idxes = replay_buffer_sample
+                *experiences, weights, idxs = self.replay_buffer.sample(self.batch_size,
+                                                                         beta=self.per_beta_schedule.value(episode))
                 experiences = self.online_value_model.load(experiences)
-                self.optimize_model(experiences, weights, idxes)
+                self.optimize_model(experiences, weights, idxs)
 
-                if np.sum(self.episode_timestep) % self.update_target_every_steps == 0:
+                if step % self.update_target_every_steps == 0:
                     self.update_networks()
 
                 if is_terminal:
                     gc.collect()
                     break
 
-            # stats
+            # Stats
+
+            # elapsed time
             episode_elapsed = time.time() - episode_start
             self.episode_seconds.append(episode_elapsed)
             training_time += episode_elapsed
-            evaluation_score, _ = self.evaluate(self.online_policy_model, self.env)
+            wallclock_elapsed = time.time() - training_start
 
-            total_step = int(np.sum(self.episode_timestep))
-            self.evaluation_scores.append(evaluation_score)
-
+            # reward
             mean_10_reward = np.mean(self.episode_reward[-10:])
             std_10_reward = np.std(self.episode_reward[-10:])
             mean_100_reward = np.mean(self.episode_reward[-100:])
             std_100_reward = np.std(self.episode_reward[-100:])
-            # mean_100_eval_score = 0
-            mean_100_eval_score = np.mean(self.evaluation_scores[-100:])
-            # std_100_eval_score = 0
-            std_100_eval_score = np.std(self.evaluation_scores[-100:])
-            lst_100_exp_rat = np.array(
-                self.episode_exploration[-100:] ) /np.array(self.episode_timestep[-100:])
+
+            # exploration rate
+            lst_100_exp_rat = np.array(np.array(self.episode_exploration[-100:]) / self.path_length)
             mean_100_exp_rat = np.mean(lst_100_exp_rat)
             std_100_exp_rat = np.std(lst_100_exp_rat)
 
-            wallclock_elapsed = time.time() - training_start
-            result[episode-1] = total_step, mean_100_reward, \
-                                mean_100_eval_score, training_time, wallclock_elapsed
+            result[episode-1] = mean_100_reward, mean_100_exp_rat, training_time, wallclock_elapsed
 
             reached_debug_time = time.time() - last_debug_time >= LEAVE_PRINT_EVERY_N_SECS
-            reached_max_minutes = wallclock_elapsed >= MAX_MINUTES * 60
-            reached_max_episodes = episode >= MAX_EPISODES
-            # reached_goal_mean_reward = mean_100_eval_score >= 0
-            reached_goal_mean_reward = False
-            training_is_over = reached_max_minutes or \
-                               reached_max_episodes or \
-                               reached_goal_mean_reward
+
             elapsed_str = time.strftime("%H:%M:%S", time.gmtime(time.time() - training_start))
-            debug_message = 'el {}, ep {:04}, ts {:07}, '
+            debug_message = 'el {}, ep {:04}, '
             debug_message += 'ar 10 {:05.1f}\u00B1{:05.1f}, '
             debug_message += '100 {:05.1f}\u00B1{:05.1f}, '
             debug_message += 'ex 100 {:02.1f}\u00B1{:02.1f}, '
             debug_message += 'ev {:05.1f}\u00B1{:05.1f}'
             debug_message = debug_message.format(
-                elapsed_str, episode-1, total_step, mean_10_reward, std_10_reward,
-                mean_100_reward, std_100_reward, mean_100_exp_rat, std_100_exp_rat,
-                mean_100_eval_score, std_100_eval_score)
+                elapsed_str, episode-1,
+                mean_10_reward, std_10_reward,
+                mean_100_reward, std_100_reward,
+                mean_100_exp_rat, std_100_exp_rat)
             print(debug_message, end='\r', flush=True)
-            if reached_debug_time or training_is_over:
+            if reached_debug_time or episode >= episodes:
                 print(ERASE_LINE + debug_message, flush=True)
                 last_debug_time = time.time()
-            if training_is_over:
-                if reached_max_minutes: print(u'--> reached_max_minutes \u2715')
-                if reached_max_episodes: print(u'--> reached_max_episodes \u2715')
-                if reached_goal_mean_reward: print(u'--> reached_goal_mean_reward \u2713')
-                break
 
-        final_eval_score, score_std = self.evaluate(self.online_policy_model, self.env, n_episodes=100)
-        wallclock_time = time.time() - training_start
-        print('Training complete.')
-        print('Final evaluation score {:.2f}\u00B1{:.2f} in {:.2f}s training time,'
-              ' {:.2f}s wall-clock time.\n'.format(
-            final_eval_score, score_std, training_time, wallclock_time))
-        self.env.close() ; del self.env
-        return result, final_eval_score, training_time, wallclock_time
+        return result, training_time, wallclock_elapsed
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):
         rs = []

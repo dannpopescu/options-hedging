@@ -41,7 +41,7 @@ class NormalNoiseStrategy():
 
 
 class EGreedyExpStrategy():
-    def __init__(self, init_epsilon=1.0, min_epsilon=0.1, decay_steps=20000, epsilon_decay=0.9999):
+    def __init__(self, init_epsilon=1.0, min_epsilon=0.1, epsilon_decay=0.9999):
         self.init_epsilon = init_epsilon
         self.min_epsilon = min_epsilon
         self.epsilon = init_epsilon
