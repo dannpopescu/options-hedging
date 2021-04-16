@@ -2,7 +2,7 @@ import gym
 import numpy as np
 
 from simulator import GBMSimulator
-from const import STOCK, OPTONS, TTM, DONE, HOLDING
+from const import STOCK, OPTONS, TTM, DONE, HOLDING, SHARES_PER_CONTRACT
 
 
 class HedgingEnv(gym.Env):
@@ -34,7 +34,7 @@ class HedgingEnv(gym.Env):
         self.prev_state = []
         self.current_state = []
 
-        self.action_space = gym.spaces.Box(0, 1, shape=(1,))
+        self.action_space = gym.spaces.Box(0, SHARES_PER_CONTRACT, shape=(1,))
 
     def reset(self):
         self.simulator.generate_new_path()
@@ -57,7 +57,7 @@ class HedgingEnv(gym.Env):
         return [observation, reward, self.current_state[DONE], []]
 
     def compute_reward(self):
-        options_value_change = self.current_state[OPTONS] - self.prev_state[OPTONS]
+        options_value_change = (self.current_state[OPTONS] - self.prev_state[OPTONS]) * SHARES_PER_CONTRACT
         stock_position_change = self.current_state[HOLDING] * (self.current_state[STOCK] - self.prev_state[STOCK])
         transaction_cost = self.trading_cost * np.abs(self.prev_state[STOCK] * (self.current_state[HOLDING] - self.prev_state[HOLDING]))
 
