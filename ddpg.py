@@ -174,6 +174,8 @@ class DDPG():
                     gc.collect()
                     break
 
+            self.training_strategy.epsilon_update()
+
             # Stats
 
             # elapsed time
