@@ -12,8 +12,5 @@ DELTA = "options.delta"
 TTM = "time.to.maturity"
 DONE = "done.flag"
 
-MAX_MINUTES = 60_000
-MAX_EPISODES = 50_000
-
-LEAVE_PRINT_EVERY_N_SECS = 120
+LEAVE_PRINT_EVERY_N_SECS = 300
 ERASE_LINE = '\033[K'

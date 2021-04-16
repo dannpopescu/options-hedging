@@ -8,13 +8,12 @@ import torch
 from torch.optim import Adam
 
 from actor import Actor
-from baselines.replay_buffer import PrioritizedReplayBuffer
-from baselines.schedules import LinearSchedule
-from const import LEAVE_PRINT_EVERY_N_SECS, ERASE_LINE, MAX_EPISODES, MAX_MINUTES
 from critic import Critic
 from env import HedgingEnv
-
+from const import LEAVE_PRINT_EVERY_N_SECS, ERASE_LINE
 from strategy import EGreedyExpStrategy, GreedyStrategy
+from baselines.schedules import LinearSchedule
+from baselines.replay_buffer import PrioritizedReplayBuffer
 
 
 class DDPG():
@@ -32,7 +31,7 @@ class DDPG():
                               r=0,
                               q=0,
                               trading_freq=1,
-                              maturity=0.5,
+                              maturity=1/12,
                               trading_cost=0.01,
                               seed=seed)
 
@@ -148,14 +147,12 @@ class DDPG():
         result[:] = np.nan
         training_time = 0
 
-        self.path_length = self.env.simulator.days_to_maturity()
-
         for episode in range(episodes):
-
             episode_start = time.time()
 
             state, is_terminal = self.env.reset(), False
 
+            self.path_length = self.env.simulator.days_to_maturity()
             self.episode_reward.append(0.0)
             self.episode_exploration.append(0.0)
 
@@ -192,7 +189,7 @@ class DDPG():
             std_100_reward = np.std(self.episode_reward[-100:])
 
             # exploration rate
-            lst_100_exp_rat = np.array(np.array(self.episode_exploration[-100:]) / self.path_length)
+            lst_100_exp_rat = np.array(self.episode_exploration[-100:]) / self.path_length
             mean_100_exp_rat = np.mean(lst_100_exp_rat)
             std_100_exp_rat = np.std(lst_100_exp_rat)
 
@@ -205,7 +202,6 @@ class DDPG():
             debug_message += 'ar 10 {:05.1f}\u00B1{:05.1f}, '
             debug_message += '100 {:05.1f}\u00B1{:05.1f}, '
             debug_message += 'ex 100 {:02.1f}\u00B1{:02.1f}, '
-            debug_message += 'ev {:05.1f}\u00B1{:05.1f}'
             debug_message = debug_message.format(
                 elapsed_str, episode-1,
                 mean_10_reward, std_10_reward,
@@ -216,7 +212,7 @@ class DDPG():
                 print(ERASE_LINE + debug_message, flush=True)
                 last_debug_time = time.time()
 
-            if episode % 1000 == 0:
+            if episode % 1000 == 0 and episode != 0:
                 torch.save({
                     'episode': episode,
                     'online_policy_state_dict': self.online_policy_model.state_dict(),
@@ -225,7 +221,7 @@ class DDPG():
                     'target_value_state_dict': self.target_value_model.state_dict(),
                     'policy_optimizer_state_dict': self.policy_optimizer.state_dict(),
                     'value_optimizer_state_dict': self.value_optimizer.state_dict(),
-                }, 'model/ddpg' + str(int(episode / 1000)) + ".pt")
+                }, 'model/ddpg_' + str(int(episode / 1000)) + ".pt")
 
         return result, training_time, wallclock_elapsed
 
