@@ -64,14 +64,14 @@ class DDPG():
         self.update_networks(tau=1.0)
 
         # Use Polyak averaging - mix the target network with a fraction of online network
-        self.tau = 0.0001
+        self.tau = ps["tau"]
         self.update_target_every_steps = 1
 
         # Optimizers
         self.policy_optimizer = Adam(params=self.online_policy_model.parameters(),
-                                     lr=1e-4)
+                                     lr=ps["plr"])
         self.value_optimizer = Adam(params=self.online_value_model.parameters(),
-                                    lr=1e-4)
+                                    lr=ps["vlr"])
 
         # Use Prioritized Experience Replay - PER as the replay buffer
         self.replay_buffer = PrioritizedReplayBuffer(size=600_000,
@@ -86,7 +86,7 @@ class DDPG():
                                                     epsilon_decay=0.99994)
         self.evaluation_strategy = GreedyStrategy()
 
-        self.batch_size = 128
+        self.batch_size = ps["bs"]
         self.gamma = 0
 
     def optimize_model(self, experiences, weights, idxs):
@@ -237,8 +237,6 @@ class DDPG():
                     'policy_optimizer_state_dict': self.policy_optimizer.state_dict(),
                     'value_optimizer_state_dict': self.value_optimizer.state_dict(),
                 }, 'model/ddpg_' + str(int(episode / 1000)) + ".pt")
-
-        return result, training_time, wallclock_elapsed
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):
         actions = []
