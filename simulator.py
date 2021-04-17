@@ -6,7 +6,7 @@ from const import STOCK, OPTONS, DELTA, TTM, DONE
 
 
 class GBMSimulator:
-    def __init__(self, init_price, mu, sigma, K, r, q, trading_freq, maturity, seed):
+    def __init__(self, init_price, mu, sigma, K, r, q, trading_freq, maturity):
         self.init_price = init_price
         self.mu = mu
         self.sigma = sigma
@@ -15,8 +15,6 @@ class GBMSimulator:
         self.q = q
         self.trading_freq = trading_freq
         self.maturity = maturity
-
-        np.random.seed(seed)
 
         self.stock_prices = []
         self.options_values = []

@@ -32,8 +32,9 @@ class DDPG():
                               q=0,
                               trading_freq=1,
                               maturity=1/12,
-                              trading_cost=0.01,
-                              seed=seed)
+                              trading_cost=0.01)
+        self.env.seed(seed)
+        self.env.action_space.seed(seed)
 
         action_bounds = self.env.action_space.low, self.env.action_space.high
         state_space, action_space = 3, 1

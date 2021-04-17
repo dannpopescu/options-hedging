@@ -8,7 +8,7 @@ from const import STOCK, OPTONS, TTM, DONE, HOLDING, SHARES_PER_CONTRACT, DELTA
 class HedgingEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, init_price, mu, sigma, strike_price, r, q, trading_freq, maturity, trading_cost, seed):
+    def __init__(self, init_price, mu, sigma, strike_price, r, q, trading_freq, maturity, trading_cost):
         """
         :param init_price: initial stock price
         :param mu: expected rate of return continuously compounded
@@ -26,8 +26,7 @@ class HedgingEnv(gym.Env):
                                       r=r,
                                       q=q,
                                       trading_freq=trading_freq,
-                                      maturity=maturity,
-                                      seed=seed)
+                                      maturity=maturity)
 
         self.trading_cost = trading_cost
         self.strike_price = strike_price
