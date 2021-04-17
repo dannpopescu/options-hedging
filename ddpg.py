@@ -6,6 +6,7 @@ from itertools import count
 import numpy as np
 import torch
 from torch.optim import Adam
+from torch.utils.tensorboard import SummaryWriter
 
 from actor import Actor
 from critic import Critic
@@ -17,7 +18,11 @@ from baselines.replay_buffer import PrioritizedReplayBuffer
 
 
 class DDPG():
-    def __init__(self, seed):
+    def __init__(self, seed, ps):
+
+        # self.writer = SummaryWriter("runs/lr2v")
+        self.writer = SummaryWriter("logs/" + ps["name"] + str(ps[ps["name"]]))
+        self.evaluation_step = 0
 
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -194,6 +199,15 @@ class DDPG():
             mean_100_exp_rat = np.mean(lst_100_exp_rat)
             std_100_exp_rat = np.std(lst_100_exp_rat)
 
+            # tensorboard metrics
+            self.writer.add_scalar("reward, 100-SMA", mean_100_reward, episode)
+            self.writer.add_scalar("reward, 10-SMA", mean_10_reward, episode)
+            self.writer.add_scalar("exploration rate", self.episode_exploration[-1] / self.path_length, episode)
+            self.writer.add_scalar("epsilon", self.training_strategy.epsilon, episode)
+
+            if episode % 10 == 0 and episode != 0:
+                self.evaluate(self.online_policy_model, self.env)
+
             result[episode-1] = mean_100_reward, mean_100_exp_rat, training_time, wallclock_elapsed
 
             reached_debug_time = time.time() - last_debug_time >= LEAVE_PRINT_EVERY_N_SECS
@@ -227,13 +241,29 @@ class DDPG():
         return result, training_time, wallclock_elapsed
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):
-        rs = []
+        actions = []
+        rewards = []
+        delta_actions = []
+        delta_rewards = []
         for _ in range(n_episodes):
+            self.evaluation_step += 1
             s, d = eval_env.reset(), False
-            rs.append(0)
             for _ in count():
                 a = self.evaluation_strategy.select_action(eval_policy_model, s)
-                s, r, d, _ = eval_env.step(a)
-                rs[-1] += r
+                s, r, d, i = eval_env.step(a)
+                actions.append(a)
+                rewards.append(r)
+                delta_actions.append(i["delta_action"])
+                delta_rewards.append(i["delta_reward"])
                 if d: break
-        return np.mean(rs), np.std(rs)
+        diffs = np.array(actions) - np.array(delta_actions)
+        diffs_mean = np.mean(diffs)
+        diffs_std = np.std(diffs)
+
+        self.writer.add_scalars("ev", {"actor_reward": np.sum(rewards)}, self.evaluation_step)
+        self.writer.add_scalars("ev", {"delta_reward": np.sum(delta_rewards)}, self.evaluation_step)
+
+        self.writer.add_scalars("ev_diff", {"mean": diffs_mean}, self.evaluation_step)
+        self.writer.add_scalars("ev_diff", {"std": diffs_std}, self.evaluation_step)
+
+        self.writer.flush()
