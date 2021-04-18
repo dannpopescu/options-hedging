@@ -57,8 +57,9 @@ class DDPG():
         self.online_value_model = Critic(input_dim=state_space + action_space)
 
         # Use Huber loss: 0 - MAE, inf - MSE
-        self.policy_max_grad_norm = float('inf')
-        self.value_max_grad_norm = float('inf')
+        
+        self.policy_max_grad_norm = float(ps["pgn"])
+        self.value_max_grad_norm = float(ps["vgn"])
 
         # Copy networks' parameters from online to target
         self.update_networks(tau=1.0)
