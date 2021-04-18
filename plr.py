@@ -14,6 +14,6 @@ ps = [
 for v in ps:
     print("Start", v)
     ddpg = DDPG(17, v)
-    ddpg.train(episodes=10)
+    ddpg.train(episodes=2000)
 
 
