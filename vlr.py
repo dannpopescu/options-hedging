@@ -1,14 +1,8 @@
 from ddpg import DDPG
 
 ps = [
-    {"name": "vlr", "plr": 0.0001, "vlr": 0.0001, "pgn": 'inf', "vgn": 'inf', "tau": 0.0001, "bs": 128},
-    {"name": "vlr", "plr": 0.0001, "vlr": 0.0005, "pgn": 'inf', "vgn": 'inf', "tau": 0.0001, "bs": 128},
-    {"name": "vlr", "plr": 0.0001, "vlr": 0.0008, "pgn": 'inf', "vgn": 'inf', "tau": 0.0001, "bs": 128},
-    {"name": "vlr", "plr": 0.0001, "vlr": 0.0010, "pgn": 'inf', "vgn": 'inf', "tau": 0.0001, "bs": 128},
-    {"name": "vlr", "plr": 0.0001, "vlr": 0.0020, "pgn": 'inf', "vgn": 'inf', "tau": 0.0001, "bs": 128},
-    {"name": "vlr", "plr": 0.0001, "vlr": 0.0030, "pgn": 'inf', "vgn": 'inf', "tau": 0.0001, "bs": 128},
-    {"name": "vlr", "plr": 0.0001, "vlr": 0.0050, "pgn": 'inf', "vgn": 'inf', "tau": 0.0001, "bs": 128},
-    {"name": "vlr", "plr": 0.0001, "vlr": 0.0070, "pgn": 'inf', "vgn": 'inf', "tau": 0.0001, "bs": 128},
+    {"name": "vlrvgn", "vlrvgn": "0.002-10", "plr": 0.0001, "vlr": 0.002, "pgn": 'inf', "vgn": 10, "tau": 0.0001, "bs": 128},
+    {"name": "vlrvgn", "vlrvgn": "0.002-0.5", "plr": 0.0001, "vlr": 0.002, "pgn": 'inf', "vgn": 0.5, "tau": 0.0001, "bs": 128},
 ]
 
 for v in ps:
