@@ -18,10 +18,10 @@ from baselines.replay_buffer import PrioritizedReplayBuffer
 
 
 class DDPG():
-    def __init__(self, seed, ps):
+    def __init__(self, seed):
 
-        # self.writer = SummaryWriter("runs/lr2v")
-        self.writer = SummaryWriter("logs/" + ps["name"] + str(ps[ps["name"]]))
+        self.writer = SummaryWriter("runs/lr2v")
+        # self.writer = SummaryWriter("logs/" + ps["name"] + str(ps[ps["name"]]))
         self.evaluation_step = 0
 
         torch.manual_seed(seed)
@@ -57,22 +57,21 @@ class DDPG():
         self.online_value_model = Critic(input_dim=state_space + action_space)
 
         # Use Huber loss: 0 - MAE, inf - MSE
-        
-        self.policy_max_grad_norm = float(ps["pgn"])
-        self.value_max_grad_norm = float(ps["vgn"])
+        self.policy_max_grad_norm = float("inf")
+        self.value_max_grad_norm = float("inf")
 
         # Copy networks' parameters from online to target
         self.update_networks(tau=1.0)
 
         # Use Polyak averaging - mix the target network with a fraction of online network
-        self.tau = ps["tau"]
+        self.tau = 0.0001
         self.update_target_every_steps = 1
 
         # Optimizers
         self.policy_optimizer = Adam(params=self.online_policy_model.parameters(),
-                                     lr=ps["plr"])
+                                     lr=1e-4)
         self.value_optimizer = Adam(params=self.online_value_model.parameters(),
-                                    lr=ps["vlr"])
+                                    lr=1e-3)
 
         # Use Prioritized Experience Replay - PER as the replay buffer
         self.replay_buffer = PrioritizedReplayBuffer(size=600_000,
@@ -84,10 +83,10 @@ class DDPG():
         # Training strategy
         self.training_strategy = EGreedyExpStrategy(init_epsilon=1,
                                                     min_epsilon=0.1,
-                                                    epsilon_decay=0.99994)
+                                                    epsilon_decay=0.9999)
         self.evaluation_strategy = GreedyStrategy()
 
-        self.batch_size = ps["bs"]
+        self.batch_size = 128
         self.gamma = 0
 
     def optimize_model(self, experiences, weights, idxs):
