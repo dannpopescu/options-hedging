@@ -70,7 +70,7 @@ class HedgingEnv(gym.Env):
         if self.current_state[DONE]:
             reward -= self.trading_cost * np.abs(crt_holding * self.current_state[STOCK])  # liquidate the hedge
 
-        return -np.abs(reward)
+        return reward
 
     def render(self, mode='human', close=False):
         pass
