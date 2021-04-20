@@ -20,7 +20,7 @@ from baselines.replay_buffer import PrioritizedReplayBuffer
 class DDPG():
     def __init__(self, seed):
 
-        self.writer = SummaryWriter("runs/lr2v")
+        self.writer = SummaryWriter("logdir")
         # self.writer = SummaryWriter("logs/" + ps["name"] + str(ps[ps["name"]]))
         self.evaluation_step = 0
 
@@ -45,20 +45,20 @@ class DDPG():
         state_space, action_space = 3, 1
 
         # Policy model - actor
-        self.target_policy_model = Actor(input_dim=state_space,
-                                         output_dim=action_space,
-                                         action_bounds=action_bounds)
-        self.online_policy_model = Actor(input_dim=state_space,
-                                         output_dim=action_space,
-                                         action_bounds=action_bounds)
+        self.target_actor = Actor(input_dim=state_space,
+                                  output_dim=action_space,
+                                  action_bounds=action_bounds)
+        self.online_actor = Actor(input_dim=state_space,
+                                  output_dim=action_space,
+                                  action_bounds=action_bounds)
 
         # Value model - critic
-        self.target_value_model = Critic(input_dim=state_space + action_space)
-        self.online_value_model = Critic(input_dim=state_space + action_space)
+        self.target_critic = Critic(input_dim=state_space + action_space)
+        self.online_critic = Critic(input_dim=state_space + action_space)
 
         # Use Huber loss: 0 - MAE, inf - MSE
-        self.policy_max_grad_norm = float("inf")
-        self.value_max_grad_norm = float("inf")
+        self.actor_max_grad_norm = float("inf")
+        self.critic_max_grad_norm = float("inf")
 
         # Copy networks' parameters from online to target
         self.update_networks(tau=1.0)
@@ -68,10 +68,10 @@ class DDPG():
         self.update_target_every_steps = 1
 
         # Optimizers
-        self.policy_optimizer = Adam(params=self.online_policy_model.parameters(),
-                                     lr=1e-4)
-        self.value_optimizer = Adam(params=self.online_value_model.parameters(),
-                                    lr=1e-3)
+        self.actor_optimizer = Adam(params=self.online_actor.parameters(),
+                                    lr=1e-4)
+        self.critic_optimizer = Adam(params=self.online_critic.parameters(),
+                                     lr=1e-3)
 
         # Use Prioritized Experience Replay - PER as the replay buffer
         self.replay_buffer = PrioritizedReplayBuffer(size=600_000,
@@ -92,32 +92,32 @@ class DDPG():
     def optimize_model(self, experiences, weights, idxs):
         states, actions, rewards, next_states, is_terminals = experiences
 
-        argmax_a_q_sp = self.target_policy_model(next_states)
-        max_a_q_sp = self.target_value_model(next_states, argmax_a_q_sp)
-        target_q_sa = rewards + self.gamma * max_a_q_sp * (1 - is_terminals)
-        q_sa = self.online_value_model(states, actions)
-        td_error = q_sa - target_q_sa.detach()
-        weights = torch.tensor(weights, dtype=torch.float32, device=self.target_value_model.device).unsqueeze(1)
-        value_loss = (weights * td_error).pow(2).mul(0.5).mean()
-        self.value_optimizer.zero_grad()
-        value_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.online_value_model.parameters(),
-                                       self.value_max_grad_norm)
-        self.value_optimizer.step()
+        actions_in_next_states = self.target_actor(next_states)
+        next_states_values = self.target_critic(next_states, actions_in_next_states)
+        states_values_target = rewards + self.gamma * next_states_values * (1 - is_terminals)
+        states_values_online = self.online_critic(states, actions)
+        td_error = states_values_online - states_values_target.detach()
+        weights = torch.tensor(weights, dtype=torch.float32, device=self.target_critic.device).unsqueeze(1)
+        critic_loss = (weights * td_error).pow(2).mul(0.5).mean()
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.online_critic.parameters(),
+                                       self.critic_max_grad_norm)
+        self.critic_optimizer.step()
         priorities = np.abs(td_error.detach().cpu().numpy() + 1e-10)  # 1e-10 to avoid zero priority
         self.replay_buffer.update_priorities(idxs, priorities)
 
-        argmax_a_q_s = self.online_policy_model(states)
-        max_a_q_s = self.online_value_model(states, argmax_a_q_s)
-        policy_loss = -max_a_q_s.mean()
-        self.policy_optimizer.zero_grad()
-        policy_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.online_policy_model.parameters(),
-                                       self.policy_max_grad_norm)
-        self.policy_optimizer.step()
+        best_actions = self.online_actor(states)
+        best_actions_values = self.online_critic(states, best_actions)
+        actor_loss = -best_actions_values.mean()
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.online_actor.parameters(),
+                                       self.actor_max_grad_norm)
+        self.actor_optimizer.step()
 
     def interaction_step(self, state):
-        action, is_exploratory = self.training_strategy.select_action(self.online_policy_model,
+        action, is_exploratory = self.training_strategy.select_action(self.online_actor,
                                                                       state,
                                                                       self.env)
         new_state, reward, is_terminal, info = self.env.step(action)
@@ -131,8 +131,8 @@ class DDPG():
     def update_networks(self, tau=None):
         if tau is None:
             tau = self.tau
-        self.mix_weights(tau, self.target_value_model, self.online_value_model)
-        self.mix_weights(tau, self.target_policy_model, self.online_policy_model)
+        self.mix_weights(tau, self.target_critic, self.online_critic)
+        self.mix_weights(tau, self.target_actor, self.online_actor)
 
     def mix_weights(self, tau, target_model, online_model):
         for target, online in zip(target_model.parameters(),
@@ -168,7 +168,7 @@ class DDPG():
                 if len(self.replay_buffer) > self.batch_size:
                     *experiences, weights, idxs = self.replay_buffer.sample(self.batch_size,
                                                                             beta=self.per_beta_schedule.value(episode))
-                    experiences = self.online_value_model.load(experiences)
+                    experiences = self.online_critic.load(experiences)
                     self.optimize_model(experiences, weights, idxs)
 
                     if step % self.update_target_every_steps == 0:
@@ -206,7 +206,7 @@ class DDPG():
             self.writer.add_scalar("epsilon", self.training_strategy.epsilon, episode)
 
             if episode % 10 == 0 and episode != 0:
-                self.evaluate(self.online_policy_model, self.env)
+                self.evaluate(self.online_actor, self.env)
 
             result[episode-1] = mean_100_reward, mean_100_exp_rat, training_time, wallclock_elapsed
 
@@ -230,12 +230,12 @@ class DDPG():
             if episode % 1000 == 0 and episode != 0:
                 torch.save({
                     'episode': episode,
-                    'online_policy_state_dict': self.online_policy_model.state_dict(),
-                    'target_policy_state_dict': self.target_policy_model.state_dict(),
-                    'online_value_state_dict': self.online_value_model.state_dict(),
-                    'target_value_state_dict': self.target_value_model.state_dict(),
-                    'policy_optimizer_state_dict': self.policy_optimizer.state_dict(),
-                    'value_optimizer_state_dict': self.value_optimizer.state_dict(),
+                    'online_policy_state_dict': self.online_actor.state_dict(),
+                    'target_policy_state_dict': self.target_actor.state_dict(),
+                    'online_value_state_dict': self.online_critic.state_dict(),
+                    'target_value_state_dict': self.target_critic.state_dict(),
+                    'policy_optimizer_state_dict': self.actor_optimizer.state_dict(),
+                    'value_optimizer_state_dict': self.critic_optimizer.state_dict(),
                 }, 'model/ddpg_' + str(int(episode / 1000)) + ".pt")
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):
