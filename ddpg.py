@@ -89,7 +89,13 @@ class DDPG():
         self.batch_size = 128
         self.gamma = 0
 
+        # total iterations
+        self.total_optimizations = 0
+        self.total_steps = 0
+
     def optimize_model(self, experiences, weights, idxs):
+        self.total_optimizations += 1
+
         states, actions, rewards, next_states, is_terminals = experiences
 
         actions_in_next_states = self.target_actor(next_states)
@@ -116,7 +122,12 @@ class DDPG():
                                        self.actor_max_grad_norm)
         self.actor_optimizer.step()
 
+        self.writer.add_scalar("actor_loss", actor_loss.detach().cpu().numpy(), self.total_optimizations)
+        self.writer.add_scalar("critic_loss", critic_loss.detach().cpu().numpy(), self.total_optimizations)
+
     def interaction_step(self, state):
+        self.total_steps += 1
+
         action, is_exploratory = self.training_strategy.select_action(self.online_actor,
                                                                       state,
                                                                       self.env)
@@ -125,6 +136,8 @@ class DDPG():
 
         self.episode_reward[-1] += reward
         self.episode_exploration[-1] += int(is_exploratory)
+
+        self.writer.add_scalar("actions", action, self.total_steps)
 
         return new_state, is_terminal
 
