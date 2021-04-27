@@ -1,4 +1,5 @@
 import gc
+import copy
 import random
 import time
 from itertools import count
@@ -45,33 +46,27 @@ class DDPG():
         state_space, action_space = 3, 1
 
         # Policy model - actor
-        self.target_actor = Actor(input_dim=state_space,
-                                  output_dim=action_space,
-                                  action_bounds=action_bounds)
-        self.online_actor = Actor(input_dim=state_space,
-                                  output_dim=action_space,
-                                  action_bounds=action_bounds)
+        self.actor = Actor(state_dim=state_space, action_dim=action_space, action_bounds=action_bounds)
+        self.actor_target = copy.deepcopy(self.actor)
 
         # Value model - critic
-        self.target_critic = Critic(input_dim=state_space + action_space, constant=1.5)
-        self.online_critic = Critic(input_dim=state_space + action_space, constant=1.5)
+        self.critic_1 = Critic(state_dim=state_space, action_dim=action_space)
+        self.critic_2 = Critic(state_dim=state_space, action_dim=action_space)
+        self.critic_1_target = copy.deepcopy(self.critic_1)
+        self.critic_2_target = copy.deepcopy(self.critic_2)
 
         # Use Huber loss: 0 - MAE, inf - MSE
         self.actor_max_grad_norm = float("inf")
         self.critic_max_grad_norm = float("inf")
-
-        # Copy networks' parameters from online to target
-        self.update_networks(tau=1.0)
 
         # Use Polyak averaging - mix the target network with a fraction of online network
         self.tau = 0.0001
         self.update_target_every_steps = 1
 
         # Optimizers
-        self.actor_optimizer = Adam(params=self.online_actor.parameters(),
-                                    lr=1e-4)
-        self.critic_optimizer = Adam(params=self.online_critic.parameters(),
-                                     lr=1e-3)
+        self.actor_optimizer = Adam(params=self.actor.parameters(), lr=5e-4)
+        self.critic_optimizer_1 = Adam(params=self.critic_1.parameters(), lr=1e-3)
+        self.critic_optimizer_2 = Adam(params=self.critic_2.parameters(),  lr=1e-3)
 
         # Use Prioritized Experience Replay - PER as the replay buffer
         self.replay_buffer = PrioritizedReplayBuffer(size=600_000,
@@ -92,43 +87,82 @@ class DDPG():
         # total iterations
         self.total_optimizations = 0
         self.total_steps = 0
+        self.total_ev_interactions = 0
 
     def optimize_model(self, experiences, weights, idxs):
         self.total_optimizations += 1
+        self.optimize_critic(experiences, weights, idxs)
+        self.optimize_actor(experiences)
 
+    def optimize_critic(self, experiences, weights, idxs):
         states, actions, rewards, next_states, is_terminals = experiences
 
-        actions_in_next_states = self.target_actor(next_states)
-        next_states_values = self.target_critic(next_states, actions_in_next_states)
-        states_values_target = rewards + self.gamma * next_states_values * (1 - is_terminals)
-        states_values_online = self.online_critic(states, actions)
-        td_error = states_values_online - states_values_target.detach()
-        weights = torch.tensor(weights, dtype=torch.float32, device=self.target_critic.device).unsqueeze(1)
-        critic_loss = (weights * td_error).pow(2).mul(0.5).mean()
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.online_critic.parameters(),
+        next_actions = self.actor_target(next_states)
+
+        next_values_1 = self.critic_1_target(next_states, next_actions)
+        next_values_2 = self.critic_2_target(next_states, next_actions)
+
+        done_mask = 1 - is_terminals
+
+        target_1 = rewards + self.gamma * next_values_1 * done_mask
+        target_2 = rewards ** 2 \
+                    + (self.gamma ** 2 * next_values_2) * done_mask \
+                    + (2 * self.gamma * rewards * next_values_1) * done_mask
+
+        td_error_1 = target_1.detach() - self.critic_1(states, actions)
+        td_error_2 = target_2.detach() - self.critic_2(states, actions)
+
+        weights = torch.tensor(weights, dtype=torch.float32, device=self.critic_1_target.device).unsqueeze(1)
+
+        critic_1_loss = (weights * td_error_1).pow(2).mul(0.5).mean()
+        critic_2_loss = (weights * td_error_2).pow(2).mul(0.5).mean()
+
+        # optimize critic 1
+        self.critic_optimizer_1.zero_grad()
+        critic_1_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic_1.parameters(),
                                        self.critic_max_grad_norm)
-        self.critic_optimizer.step()
-        priorities = np.abs(td_error.detach().cpu().numpy() + 1e-10)  # 1e-10 to avoid zero priority
+        self.critic_optimizer_1.step()
+
+        # optimize critic Q2
+        self.critic_optimizer_2.zero_grad()
+        critic_2_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic_2.parameters(),
+                                       self.critic_max_grad_norm)
+        self.critic_optimizer_2.step()
+
+        # update priorities in replay buffer
+        priorities = np.abs(td_error_1.detach().cpu().numpy()) + 1e-10  # 1e-10 to avoid zero priority
         self.replay_buffer.update_priorities(idxs, priorities)
 
-        best_actions = self.online_actor(states)
-        best_actions_values = self.online_critic(states, best_actions)
-        actor_loss = -best_actions_values.mean()
+        self.writer.add_scalar("critic_1_loss", critic_1_loss.detach().cpu().numpy(), self.total_optimizations)
+        self.writer.add_scalar("critic_2_loss", critic_2_loss.detach().cpu().numpy(), self.total_optimizations)
+
+    def optimize_actor(self, experiences):
+        states, actions, rewards, next_states, is_terminals = experiences
+
+        chosen_actions = self.actor(states)
+
+        # Objective Function: expected hedging cost plus a constant
+        # multiplied by the std of the hedging cost
+        q1 = self.critic_1(states, chosen_actions)
+        q2 = self.critic_2(states, chosen_actions)
+        values = q1 + 1.5 * torch.sqrt(q2 - q1*q1)
+
+        actor_loss = -values.mean()
+
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.online_actor.parameters(),
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(),
                                        self.actor_max_grad_norm)
         self.actor_optimizer.step()
 
         self.writer.add_scalar("actor_loss", actor_loss.detach().cpu().numpy(), self.total_optimizations)
-        self.writer.add_scalar("critic_loss", critic_loss.detach().cpu().numpy(), self.total_optimizations)
 
     def interaction_step(self, state):
         self.total_steps += 1
 
-        action, is_exploratory = self.training_strategy.select_action(self.online_actor,
+        action, is_exploratory = self.training_strategy.select_action(self.actor,
                                                                       state,
                                                                       self.env)
         new_state, reward, is_terminal, info = self.env.step(action)
@@ -144,8 +178,9 @@ class DDPG():
     def update_networks(self, tau=None):
         if tau is None:
             tau = self.tau
-        self.mix_weights(tau, self.target_critic, self.online_critic)
-        self.mix_weights(tau, self.target_actor, self.online_actor)
+        self.mix_weights(tau, self.critic_1_target, self.critic_1)
+        self.mix_weights(tau, self.critic_2_target, self.critic_2)
+        self.mix_weights(tau, self.actor_target, self.actor)
 
     def mix_weights(self, tau, target_model, online_model):
         for target, online in zip(target_model.parameters(),
@@ -181,7 +216,7 @@ class DDPG():
                 if len(self.replay_buffer) > self.batch_size:
                     *experiences, weights, idxs = self.replay_buffer.sample(self.batch_size,
                                                                             beta=self.per_beta_schedule.value(episode))
-                    experiences = self.online_critic.load(experiences)
+                    experiences = self.critic_1.load(experiences)
                     self.optimize_model(experiences, weights, idxs)
 
                     if step % self.update_target_every_steps == 0:
@@ -219,7 +254,7 @@ class DDPG():
             self.writer.add_scalar("epsilon", self.training_strategy.epsilon, episode)
 
             if episode % 10 == 0 and episode != 0:
-                self.evaluate(self.online_actor, self.env)
+                self.evaluate(self.actor, self.env)
 
             result[episode-1] = mean_100_reward, mean_100_exp_rat, training_time, wallclock_elapsed
 
@@ -260,12 +295,15 @@ class DDPG():
             self.evaluation_step += 1
             s, d = eval_env.reset(), False
             for _ in count():
+                self.total_ev_interactions += 1
                 a = self.evaluation_strategy.select_action(eval_policy_model, s)
                 s, r, d, i = eval_env.step(a)
                 actions.append(a)
                 rewards.append(r)
                 delta_actions.append(i["delta_action"])
                 delta_rewards.append(i["delta_reward"])
+                self.writer.add_scalars("ev_actions", {"actor": a}, self.total_ev_interactions)
+                self.writer.add_scalars("ev_actions", {"delta": i["delta_action"]}, self.total_ev_interactions)
                 if d: break
         diffs = np.array(actions) - np.array(delta_actions)
         diffs_mean = np.mean(diffs)

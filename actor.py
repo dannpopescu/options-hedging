@@ -4,8 +4,8 @@ import torch.nn as nn
 
 class Actor(nn.Module):
     def __init__(self,
-                 input_dim,
-                 output_dim,
+                 state_dim,
+                 action_dim,
                  action_bounds):
         super(Actor, self).__init__()
         self.env_min, self.env_max = action_bounds
@@ -13,14 +13,14 @@ class Actor(nn.Module):
         hidden_dims = (32, 64)
 
         self.nn = nn.Sequential(
-            nn.BatchNorm1d(input_dim),
-            nn.Linear(input_dim, hidden_dims[0]),
+            nn.BatchNorm1d(state_dim),
+            nn.Linear(state_dim, hidden_dims[0]),
             nn.BatchNorm1d(hidden_dims[0]),
             nn.ReLU(),
             nn.Linear(hidden_dims[0], hidden_dims[1]),
             nn.BatchNorm1d(hidden_dims[1]),
             nn.ReLU(),
-            nn.Linear(hidden_dims[1], output_dim),
+            nn.Linear(hidden_dims[1], action_dim),
             nn.Sigmoid()
         )
 
