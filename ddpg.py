@@ -82,7 +82,7 @@ class DDPG():
         self.evaluation_strategy = GreedyStrategy()
 
         self.batch_size = 128
-        self.gamma = 0
+        self.gamma = 1
 
         # total iterations
         self.total_optimizations = 0
