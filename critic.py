@@ -3,12 +3,25 @@ import torch.nn as nn
 
 
 class Critic(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, constant):
         super(Critic, self).__init__()
+
+        self.constant = constant
 
         hidden_dims = (32, 64)
 
-        self.nn = nn.Sequential(
+        self.q_1 = nn.Sequential(
+            nn.BatchNorm1d(input_dim),
+            nn.Linear(input_dim, hidden_dims[0]),
+            nn.BatchNorm1d(hidden_dims[0]),
+            nn.ReLU(),
+            nn.Linear(hidden_dims[0], hidden_dims[1]),
+            nn.BatchNorm1d(hidden_dims[1]),
+            nn.ReLU(),
+            nn.Linear(hidden_dims[1], 1)
+        )
+
+        self.q_2 = nn.Sequential(
             nn.BatchNorm1d(input_dim),
             nn.Linear(input_dim, hidden_dims[0]),
             nn.BatchNorm1d(hidden_dims[0]),
@@ -37,12 +50,21 @@ class Critic(nn.Module):
                              device=self.device,
                              dtype=torch.float32)
             u = u.unsqueeze(0)
-        return x, u
+        return torch.cat((x, u), dim=1)
 
     def forward(self, state, action):
-        x, u = self._format(state, action)
-        x = torch.cat((x, u), dim=1)
-        return self.nn(x)
+        x = self._format(state, action)
+        q_1 = self.q_1(x)
+        q_2 = self.q_2(x)
+        return q_1 + self.constant * torch.sqrt(q_2 - q_1 * q_1)
+
+    def forward_q_1(self, state, action):
+        x = self._format(state, action)
+        return self.q_1(x)
+
+    def forward_q_2(self, state, action):
+        x = self._format(state, action)
+        return self.q_2(x)
 
     def load(self, experiences):
         states, actions, rewards, new_states, is_terminals = experiences

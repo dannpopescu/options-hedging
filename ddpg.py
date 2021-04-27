@@ -53,8 +53,8 @@ class DDPG():
                                   action_bounds=action_bounds)
 
         # Value model - critic
-        self.target_critic = Critic(input_dim=state_space + action_space)
-        self.online_critic = Critic(input_dim=state_space + action_space)
+        self.target_critic = Critic(input_dim=state_space + action_space, constant=1.5)
+        self.online_critic = Critic(input_dim=state_space + action_space, constant=1.5)
 
         # Use Huber loss: 0 - MAE, inf - MSE
         self.actor_max_grad_norm = float("inf")
