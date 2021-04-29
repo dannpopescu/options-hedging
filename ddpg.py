@@ -91,8 +91,8 @@ class DDPG():
 
     def optimize_model(self, experiences, weights, idxs):
         self.total_optimizations += 1
-        self.optimize_critic(experiences, weights, idxs)
         self.optimize_actor(experiences)
+        self.optimize_critic(experiences, weights, idxs)
 
     def optimize_critic(self, experiences, weights, idxs):
         states, actions, rewards, next_states, is_terminals = experiences
@@ -132,7 +132,7 @@ class DDPG():
         self.critic_optimizer_2.step()
 
         # update priorities in replay buffer
-        priorities = np.abs(td_error_1.detach().cpu().numpy()) + 1e-10  # 1e-10 to avoid zero priority
+        priorities = (np.abs(td_error_1.detach().cpu().numpy()) + 1e-10).flatten()  # 1e-10 to avoid zero priority
         self.replay_buffer.update_priorities(idxs, priorities)
 
         self.writer.add_scalar("critic_1_loss", critic_1_loss.detach().cpu().numpy(), self.total_optimizations)
@@ -143,11 +143,11 @@ class DDPG():
 
         chosen_actions = self.actor(states)
 
-        # Objective Function: expected hedging cost plus a constant
+        # Objective Function: expected hedging cost minus a constant
         # multiplied by the std of the hedging cost
         q1 = self.critic_1(states, chosen_actions)
         q2 = self.critic_2(states, chosen_actions)
-        values = q1 + 1.5 * torch.sqrt(q2 - q1*q1)
+        values = q1 - 1.5 * torch.sqrt(torch.clamp_min(q2 - q1*q1, 0) + 1e-8)  # 1e-8 to avoid nan gradient at sqrt(0)
 
         actor_loss = -values.mean()
 
@@ -278,12 +278,15 @@ class DDPG():
             if episode % 1000 == 0 and episode != 0:
                 torch.save({
                     'episode': episode,
-                    'online_policy_state_dict': self.online_actor.state_dict(),
-                    'target_policy_state_dict': self.target_actor.state_dict(),
-                    'online_value_state_dict': self.online_critic.state_dict(),
-                    'target_value_state_dict': self.target_critic.state_dict(),
-                    'policy_optimizer_state_dict': self.actor_optimizer.state_dict(),
-                    'value_optimizer_state_dict': self.critic_optimizer.state_dict(),
+                    'actor': self.actor.state_dict(),
+                    'actor_target': self.actor_target.state_dict(),
+                    'actor_optimizer': self.actor_optimizer.state_dict(),
+                    'critic_1': self.critic_1.state_dict(),
+                    'critic_1_target': self.critic_1_target.state_dict(),
+                    'critic_optimizer_1': self.critic_optimizer_1.state_dict(),
+                    'critic_2': self.critic_2.state_dict(),
+                    'critic_2_target': self.critic_2_target.state_dict(),
+                    'critic_optimizer_2': self.critic_optimizer_2.state_dict(),
                 }, 'model/ddpg_' + str(int(episode / 1000)) + ".pt")
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):
