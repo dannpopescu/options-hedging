@@ -68,7 +68,12 @@ class HedgingEnv(gym.Env):
         reward = -options_value_change + stock_position_change - transaction_cost
 
         if self.current_state[DONE]:
-            reward -= self.trading_cost * np.abs(crt_holding * self.current_state[STOCK])  # liquidate the hedge
+            if self.strike_price <= self.current_state[STOCK]:
+                # buy more shares, up to the amount of the contract
+                reward -= self.trading_cost * (SHARES_PER_CONTRACT - crt_holding) * self.current_state[STOCK]
+            else:
+                # liquidate the hedge
+                reward -= self.trading_cost * crt_holding * self.current_state[STOCK]
 
         return reward
 
