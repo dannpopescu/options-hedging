@@ -114,8 +114,8 @@ class DDPG():
 
         weights = torch.tensor(weights, dtype=torch.float32, device=self.critic_1_target.device).unsqueeze(1)
 
-        critic_1_loss = (weights * td_error_1).pow(2).mul(0.5).mean()
-        critic_2_loss = (weights * td_error_2).pow(2).mul(0.5).mean()
+        critic_1_loss = (td_error_1 ** 2 * weights).mean()
+        critic_2_loss = (td_error_2 ** 2 * weights).mean()
 
         # optimize critic 1
         self.critic_optimizer_1.zero_grad()
@@ -132,7 +132,7 @@ class DDPG():
         self.critic_optimizer_2.step()
 
         # update priorities in replay buffer
-        priorities = (np.abs(td_error_1.detach().cpu().numpy()) + 1e-10).flatten()  # 1e-10 to avoid zero priority
+        priorities = (np.abs(td_error_2.detach().cpu().numpy()) + 1e-10).flatten()  # 1e-10 to avoid zero priority
         self.replay_buffer.update_priorities(idxs, priorities)
 
         self.writer.add_scalar("critic_1_loss", critic_1_loss.detach().cpu().numpy(), self.total_optimizations)
