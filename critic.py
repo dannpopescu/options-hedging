@@ -15,6 +15,8 @@ class Critic(nn.Module):
         self.q1 = Q(dims, initial_norm_fc)
         self.q2 = Q(dims, initial_norm_fc)
 
+        self.device = self.q1.device
+
     def _format(self, state, action):
         x, u = state, action
         if not isinstance(x, torch.Tensor):

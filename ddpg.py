@@ -110,7 +110,7 @@ class DDPG():
         td_error_1 = target_1.detach() - self.critic.Q1(states, actions)
         td_error_2 = target_2.detach() - self.critic.Q2(states, actions)
 
-        weights = torch.tensor(weights, dtype=torch.float32, device=self.critic.Q1.device).unsqueeze(1)
+        weights = torch.tensor(weights, dtype=torch.float32, device=self.critic.device).unsqueeze(1)
 
         critic_q1_loss = (td_error_1 ** 2 * weights).mean()
         critic_q2_loss = (td_error_2 ** 2 * weights).mean()
