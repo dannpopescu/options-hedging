@@ -8,43 +8,36 @@ class GreedyStrategy():
 
 
 class NormalNoiseStrategy():
-    def __init__(self, bounds, exploration_noise_ratio=0.1):
-        self.low, self.high = bounds
-        self.exploration_noise_ratio = exploration_noise_ratio
-        self.ratio_noise_injected = 0
-        self.actions_nn = []
-        self.actions_n = []
-        self.actions_r = []
+    def __init__(self, epsilon, min_epsilon, epsilon_decay, action_bounds, noise_scale, noise_clip):
+        self.epsilon = epsilon
+        self.min_epsilon = min_epsilon
+        self.epsilon_decay = epsilon_decay
 
-    def select_action(self, model, state, max_exploration=False):
-        if max_exploration:
-            noise_scale = 0.2
-        else:
-            noise_scale = self.exploration_noise_ratio * self.high
+        self.low, self.high = action_bounds
+        self.noise_scale = noise_scale
+        self.noise_clip = noise_clip
 
-        model.eval()
-        with torch.no_grad():
-            greedy_action = model(state).cpu().detach().data.numpy().squeeze()
-        model.train()
-        self.actions_nn.append(greedy_action)
+    def epsilon_update(self):
+        if self.epsilon > self.min_epsilon:
+            self.epsilon *= self.epsilon_decay
 
-        noise = np.random.normal(loc=0, scale=noise_scale, size=len(self.high))
-        self.actions_n.append(noise)
+    def select_action(self, model, state, env):
+        action = get_greedy_action(model, state)
+        is_exploratory = False
 
-        noisy_action = greedy_action + noise
+        if np.random.rand() <= self.epsilon_decay:
+            noise = np.clip(np.random.normal(0, self.noise_scale), -self.noise_clip, self.noise_clip)
+            noisy_action = action + noise
+            action = np.clip(noisy_action, self.low, self.high)[0]
+            is_exploratory = True
 
-        action = np.clip(noisy_action, self.low, self.high)
-        self.actions_r.append(action)
-
-        self.ratio_noise_injected = np.mean(abs((greedy_action - action ) /(self.high - self.low)))
-        return action[0]
+        return action, is_exploratory
 
 
 class EGreedyExpStrategy():
-    def __init__(self, init_epsilon=1.0, min_epsilon=0.1, epsilon_decay=0.9999):
-        self.init_epsilon = init_epsilon
+    def __init__(self, epsilon=1.0, min_epsilon=0.1, epsilon_decay=0.9999):
+        self.epsilon = epsilon
         self.min_epsilon = min_epsilon
-        self.epsilon = init_epsilon
         self.epsilon_decay = epsilon_decay
 
     def epsilon_update(self):
