@@ -13,7 +13,7 @@ from actor import Actor
 from critic import Critic
 from env import HedgingEnv
 from const import LEAVE_PRINT_EVERY_N_SECS, ERASE_LINE
-from strategy import EGreedyExpStrategy, GreedyStrategy
+from strategy import EGreedyExpStrategy, GreedyStrategy, NormalNoiseStrategy
 from baselines.schedules import LinearSchedule
 from baselines.replay_buffer import PrioritizedReplayBuffer
 
@@ -50,10 +50,8 @@ class DDPG():
         self.actor_target = copy.deepcopy(self.actor)
 
         # Value model - critic
-        self.critic_1 = Critic(state_dim=state_space, action_dim=action_space)
-        self.critic_2 = Critic(state_dim=state_space, action_dim=action_space)
-        self.critic_1_target = copy.deepcopy(self.critic_1)
-        self.critic_2_target = copy.deepcopy(self.critic_2)
+        self.critic = Critic(state_dim=state_space, action_dim=action_space)
+        self.critic_target = copy.deepcopy(self.critic)
 
         # Use Huber loss: 0 - MAE, inf - MSE
         self.actor_max_grad_norm = float("inf")
@@ -64,9 +62,9 @@ class DDPG():
         self.update_target_every_steps = 1
 
         # Optimizers
-        self.actor_optimizer = Adam(params=self.actor.parameters(), lr=5e-4)
-        self.critic_optimizer_1 = Adam(params=self.critic_1.parameters(), lr=1e-3)
-        self.critic_optimizer_2 = Adam(params=self.critic_2.parameters(),  lr=1e-3)
+        self.actor_optimizer = Adam(params=self.actor.parameters(), lr=1e-5)
+        self.critic_q1_optimizer = Adam(params=self.critic.q1.parameters(), lr=1e-5)
+        self.critic_q2_optimizer = Adam(params=self.critic.q2.parameters(),  lr=1e-5)
 
         # Use Prioritized Experience Replay - PER as the replay buffer
         self.replay_buffer = PrioritizedReplayBuffer(size=600_000,
@@ -91,16 +89,16 @@ class DDPG():
 
     def optimize_model(self, experiences, weights, idxs):
         self.total_optimizations += 1
-        self.optimize_actor(experiences)
         self.optimize_critic(experiences, weights, idxs)
+        self.optimize_actor(experiences)
 
     def optimize_critic(self, experiences, weights, idxs):
         states, actions, rewards, next_states, is_terminals = experiences
 
         next_actions = self.actor_target(next_states)
 
-        next_values_1 = self.critic_1_target(next_states, next_actions)
-        next_values_2 = self.critic_2_target(next_states, next_actions)
+        next_values_1 = self.critic_target.Q1(next_states, next_actions)
+        next_values_2 = self.critic_target.Q2(next_states, next_actions)
 
         done_mask = 1 - is_terminals
 
@@ -109,47 +107,41 @@ class DDPG():
                     + (self.gamma ** 2 * next_values_2) * done_mask \
                     + (2 * self.gamma * rewards * next_values_1) * done_mask
 
-        td_error_1 = target_1.detach() - self.critic_1(states, actions)
-        td_error_2 = target_2.detach() - self.critic_2(states, actions)
+        td_error_1 = target_1.detach() - self.critic.Q1(states, actions)
+        td_error_2 = target_2.detach() - self.critic.Q2(states, actions)
 
-        weights = torch.tensor(weights, dtype=torch.float32, device=self.critic_1_target.device).unsqueeze(1)
+        weights = torch.tensor(weights, dtype=torch.float32, device=self.critic.Q1.device).unsqueeze(1)
 
-        critic_1_loss = (td_error_1 ** 2 * weights).mean()
-        critic_2_loss = (td_error_2 ** 2 * weights).mean()
+        critic_q1_loss = (td_error_1 ** 2 * weights).mean()
+        critic_q2_loss = (td_error_2 ** 2 * weights).mean()
 
         # optimize critic 1
-        self.critic_optimizer_1.zero_grad()
-        critic_1_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic_1.parameters(),
+        self.critic_q1_optimizer.zero_grad()
+        critic_q1_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic.q1.parameters(),
                                        self.critic_max_grad_norm)
-        self.critic_optimizer_1.step()
+        self.critic_q1_optimizer.step()
 
         # optimize critic Q2
-        self.critic_optimizer_2.zero_grad()
-        critic_2_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic_2.parameters(),
+        self.critic_q2_optimizer.zero_grad()
+        critic_q2_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic.q2.parameters(),
                                        self.critic_max_grad_norm)
-        self.critic_optimizer_2.step()
+        self.critic_q2_optimizer.step()
 
         # update priorities in replay buffer
         priorities = (np.abs(td_error_2.detach().cpu().numpy()) + 1e-10).flatten()  # 1e-10 to avoid zero priority
         self.replay_buffer.update_priorities(idxs, priorities)
 
-        self.writer.add_scalar("critic_1_loss", critic_1_loss.detach().cpu().numpy(), self.total_optimizations)
-        self.writer.add_scalar("critic_2_loss", critic_2_loss.detach().cpu().numpy(), self.total_optimizations)
+        self.writer.add_scalar("critic_q1_loss", critic_q1_loss.detach().cpu().numpy(), self.total_optimizations)
+        self.writer.add_scalar("critic_q2_loss", critic_q2_loss.detach().cpu().numpy(), self.total_optimizations)
 
     def optimize_actor(self, experiences):
         states, actions, rewards, next_states, is_terminals = experiences
 
         chosen_actions = self.actor(states)
-
-        # Objective Function: expected hedging cost minus a constant
-        # multiplied by the std of the hedging cost
-        q1 = self.critic_1(states, chosen_actions)
-        q2 = self.critic_2(states, chosen_actions)
-        values = q1 - 1.5 * torch.sqrt(torch.clamp_min(q2 - q1*q1, 0) + 1e-8)  # 1e-8 to avoid nan gradient at sqrt(0)
-
-        actor_loss = -values.mean()
+        expected_reward = self.critic(states, chosen_actions)
+        actor_loss = -expected_reward.mean()
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -171,15 +163,13 @@ class DDPG():
         self.episode_reward[-1] += reward
         self.episode_exploration[-1] += int(is_exploratory)
 
-        self.writer.add_scalar("actions", action, self.total_steps)
-
         return new_state, is_terminal
 
     def update_networks(self, tau=None):
         if tau is None:
             tau = self.tau
-        self.mix_weights(tau, self.critic_1_target, self.critic_1)
-        self.mix_weights(tau, self.critic_2_target, self.critic_2)
+        self.mix_weights(tau, self.critic_target.q1, self.critic.q1)
+        self.mix_weights(tau, self.critic_target.q2, self.critic.q2)
         self.mix_weights(tau, self.actor_target, self.actor)
 
     def mix_weights(self, tau, target_model, online_model):
@@ -201,7 +191,7 @@ class DDPG():
         result[:] = np.nan
         training_time = 0
 
-        for episode in range(episodes):
+        for episode in range(1, episodes+1):
             episode_start = time.time()
 
             state, is_terminal = self.env.reset(), False
@@ -216,7 +206,7 @@ class DDPG():
                 if len(self.replay_buffer) > self.batch_size:
                     *experiences, weights, idxs = self.replay_buffer.sample(self.batch_size,
                                                                             beta=self.per_beta_schedule.value(episode))
-                    experiences = self.critic_1.load(experiences)
+                    experiences = self.critic.load(experiences)
                     self.optimize_model(experiences, weights, idxs)
 
                     if step % self.update_target_every_steps == 0:
@@ -248,9 +238,6 @@ class DDPG():
             std_100_exp_rat = np.std(lst_100_exp_rat)
 
             # tensorboard metrics
-            self.writer.add_scalar("reward, 100-SMA", mean_100_reward, episode)
-            self.writer.add_scalar("reward, 10-SMA", mean_10_reward, episode)
-            self.writer.add_scalar("exploration rate", self.episode_exploration[-1] / self.path_length, episode)
             self.writer.add_scalar("epsilon", self.training_strategy.epsilon, episode)
 
             if episode % 10 == 0 and episode != 0:
@@ -275,19 +262,62 @@ class DDPG():
                 print(ERASE_LINE + debug_message, flush=True)
                 last_debug_time = time.time()
 
-            if episode % 1000 == 0 and episode != 0:
-                torch.save({
-                    'episode': episode,
-                    'actor': self.actor.state_dict(),
-                    'actor_target': self.actor_target.state_dict(),
-                    'actor_optimizer': self.actor_optimizer.state_dict(),
-                    'critic_1': self.critic_1.state_dict(),
-                    'critic_1_target': self.critic_1_target.state_dict(),
-                    'critic_optimizer_1': self.critic_optimizer_1.state_dict(),
-                    'critic_2': self.critic_2.state_dict(),
-                    'critic_2_target': self.critic_2_target.state_dict(),
-                    'critic_optimizer_2': self.critic_optimizer_2.state_dict(),
-                }, 'model/ddpg_' + str(int(episode / 1000)) + ".pt")
+            if episode % 1000 == 0:
+                filename = 'model/ddpg_' + str(int(episode / 1000)) + ".pt"
+                self.save(episode, filename)
+
+    def save(self, episode, filename):
+        torch.save({
+            'episode': episode,
+            'actor': self.actor.state_dict(),
+            'actor_target': self.actor_target.state_dict(),
+            'actor_optimizer': self.actor_optimizer.state_dict(),
+            'critic_q1': self.critic.q1.state_dict(),
+            'critic_target_q1': self.critic_target.q1.state_dict(),
+            'critic_q1_optimizer': self.critic_q1_optimizer.state_dict(),
+            'critic_q2': self.critic.q2.state_dict(),
+            'critic_target_q2': self.critic_target.q2.state_dict(),
+            'critic_q2_optimizer': self.critic_q2_optimizer.state_dict(),
+        }, filename)
+
+    def load(self, filename):
+        saved = torch.load(filename)
+        self.actor.load_state_dict(saved['actor'])
+        self.actor_target.load_state_dict(saved['actor_target'])
+        self.actor_optimizer.load_state_dict(saved['actor_optimizer'])
+        self.critic.q1.load_state_dict(saved['critic_q1'])
+        self.critic_target.q2.load_state_dict(saved['critic_target_q1'])
+        self.critic.q2.load_state_dict(saved['critic_q2'])
+        self.critic_target.q2.load_state_dict(saved['critic_target_q2'])
+        self.critic_q2_optimizer.load_state_dict(saved['critic_q2_optimizer'])
+
+    def test(self, episodes):
+        model_actions = []
+        model_rewards = []
+        model_final_rewards = []
+
+        delta_actions = []
+        delta_rewards = []
+        delta_final_rewards = []
+
+        for i in range(1, episodes + 1):
+            state, done = self.env.reset(), False
+            while not done:
+                action = self.evaluation_strategy.select_action(self.actor, state)
+                state, reward, done, info = self.env.step(action)
+                model_actions.append(action)
+                model_rewards.append(reward)
+                delta_actions.append(info["delta_action"])
+                delta_rewards.append(info["delta_reward"])
+            model_final_rewards.append(np.sum(model_rewards))
+            delta_final_rewards.append(np.sum(delta_rewards))
+            model_rewards = []
+            delta_rewards = []
+
+            if i % 1000 == 0:
+                print("{:0>5}: model {:.2f}  {:.2f}   delta {:.2f}  {:.2f}".format(i,
+                                                               np.mean(model_final_rewards), np.std(model_final_rewards),
+                                                               np.mean(delta_final_rewards), np.std(delta_final_rewards)))
 
     def evaluate(self, eval_policy_model, eval_env, n_episodes=1):
         actions = []

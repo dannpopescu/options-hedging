@@ -6,24 +6,14 @@ class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
 
-        hidden_dims = (32, 64)
+        dims = [32, 64]
+        dims.insert(0, state_dim + action_dim)
+        dims.append(1)
 
-        self.nn = nn.Sequential(
-            nn.BatchNorm1d(state_dim + action_dim),
-            nn.Linear(state_dim + action_dim, hidden_dims[0]),
-            nn.ReLU(),
-            nn.BatchNorm1d(hidden_dims[0]),
-            nn.Linear(hidden_dims[0], hidden_dims[1]),
-            nn.ReLU(),
-            nn.BatchNorm1d(hidden_dims[1]),
-            nn.Linear(hidden_dims[1], 1)
-        )
+        initial_norm_fc = nn.BatchNorm1d(dims[0])
 
-        device = "cpu"
-        if torch.cuda.is_available():
-            device = "cuda:0"
-        self.device = torch.device(device)
-        self.to(self.device)
+        self.q1 = Q(dims, initial_norm_fc)
+        self.q2 = Q(dims, initial_norm_fc)
 
     def _format(self, state, action):
         x, u = state, action
@@ -41,7 +31,18 @@ class Critic(nn.Module):
 
     def forward(self, state, action):
         x = self._format(state, action)
-        return self.nn(x)
+        x1 = self.q1(x)
+        x2 = self.q2(x)
+        expected_reward = x1 - 1.5 * torch.sqrt(torch.clamp_min(x2 - x1*x1, 0) + 1e-15)
+        return expected_reward
+
+    def Q1(self, state, action):
+        x = self._format(state, action)
+        return self.q1(x)
+
+    def Q2(self, state, action):
+        x = self._format(state, action)
+        return self.q2(x)
 
     def load(self, experiences):
         states, actions, rewards, new_states, is_terminals = experiences
@@ -51,3 +52,29 @@ class Critic(nn.Module):
         new_states = torch.from_numpy(new_states).float().to(self.device)
         is_terminals = torch.from_numpy(is_terminals).float().to(self.device)
         return states, actions, rewards, new_states, is_terminals
+
+
+class Q(nn.Module):
+    def __init__(self, dims, initial_norm_fc):
+        super(Q, self).__init__()
+
+        self.initial_normalization = initial_norm_fc
+
+        modules = []
+        for i in range(1, len(dims)):
+            modules.append(nn.Linear(dims[i-1], dims[i]))
+            if i != (len(dims) - 1):
+                modules.append(nn.ReLU())
+                modules.append(nn.BatchNorm1d(dims[i]))
+
+        self.nn = nn.Sequential(*modules)
+
+        device = "cpu"
+        if torch.cuda.is_available():
+            device = "cuda:0"
+        self.device = torch.device(device)
+        self.to(self.device)
+
+    def forward(self, x):
+        x = self.initial_normalization(x)
+        return self.nn(x)
