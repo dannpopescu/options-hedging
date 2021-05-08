@@ -16,7 +16,7 @@ class ReplayBuffer():
         self._idx = 0
         self.size = 0
 
-    def store(self, sample):
+    def add(self, *sample):
         s, a, r, p, d = sample
         self.ss_mem[self._idx] = s
         self.as_mem[self._idx] = a
@@ -30,7 +30,7 @@ class ReplayBuffer():
         self.size += 1
         self.size = min(self.size, self.max_size)
 
-    def sample(self, batch_size=None):
+    def sample(self, batch_size=None, beta=1):
         if batch_size == None:
             batch_size = self.batch_size
 
@@ -41,7 +41,7 @@ class ReplayBuffer():
                       np.vstack(self.rs_mem[idxs]), \
                       np.vstack(self.ps_mem[idxs]), \
                       np.vstack(self.ds_mem[idxs])
-        return experiences
+        return *experiences, np.ones((batch_size,)), []
 
     def __len__(self):
         return self.size
