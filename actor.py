@@ -19,13 +19,13 @@ class Actor(nn.Module):
         hidden_dims = (32, 64)
 
         self.nn = nn.Sequential(
-            nn.BatchNorm1d(state_dim, momentum=0.01),
+            nn.BatchNorm1d(state_dim, momentum=0.01, eps=1e-3),
             nn.Linear(state_dim, hidden_dims[0]),
             nn.ReLU(),
-            nn.BatchNorm1d(hidden_dims[0], momentum=0.01),
+            nn.BatchNorm1d(hidden_dims[0], momentum=0.01, eps=1e-3),
             nn.Linear(hidden_dims[0], hidden_dims[1]),
             nn.ReLU(),
-            nn.BatchNorm1d(hidden_dims[1], momentum=0.01),
+            nn.BatchNorm1d(hidden_dims[1], momentum=0.01, eps=1e-3),
             nn.Linear(hidden_dims[1], action_dim),
             nn.Sigmoid()
         )

@@ -16,7 +16,7 @@ class Critic(nn.Module):
         dims.insert(0, state_dim + action_dim)
         dims.append(1)
 
-        initial_norm_fc = nn.BatchNorm1d(dims[0], momentum=0.01)
+        initial_norm_fc = nn.BatchNorm1d(dims[0], momentum=0.01, eps=1e-3)
 
         self.q1 = Q(dims, initial_norm_fc)
         self.q2 = Q(dims, initial_norm_fc)
@@ -73,7 +73,7 @@ class Q(nn.Module):
             modules.append(nn.Linear(dims[i-1], dims[i]))
             if i != (len(dims) - 1):
                 modules.append(nn.ReLU())
-                modules.append(nn.BatchNorm1d(dims[i], momentum=0.01))
+                modules.append(nn.BatchNorm1d(dims[i], momentum=0.01, eps=1e-3))
 
         self.nn = nn.Sequential(*modules)
 
