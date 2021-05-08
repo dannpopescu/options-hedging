@@ -94,6 +94,7 @@ class DDPG():
 
     def optimize_critic(self, experiences, weights, idxs):
         states, actions, rewards, next_states, is_terminals = experiences
+        weights = torch.tensor(weights, dtype=torch.float32, device=self.critic.device).unsqueeze(1)
 
         next_actions = self.actor_target(next_states)
 
@@ -107,14 +108,8 @@ class DDPG():
                     + (self.gamma ** 2 * next_values_2) * done_mask \
                     + (2 * self.gamma * rewards * next_values_1) * done_mask
 
-        td_error_1 = target_1.detach() - self.critic.Q1(states, actions)
-        td_error_2 = target_2.detach() - self.critic.Q2(states, actions)
-
-        weights = torch.tensor(weights, dtype=torch.float32, device=self.critic.device).unsqueeze(1)
-
-        critic_q1_loss = (td_error_1 ** 2 * weights).mean()
-        critic_q2_loss = (td_error_2 ** 2 * weights).mean()
-
+        td_error_1 = self.critic.Q1(states, actions) - target_1.detach()
+        critic_q1_loss = (weights * td_error_1 ** 2).mean()
         # optimize critic 1
         self.critic_q1_optimizer.zero_grad()
         critic_q1_loss.backward()
@@ -122,6 +117,9 @@ class DDPG():
                                        self.critic_max_grad_norm)
         self.critic_q1_optimizer.step()
 
+
+        td_error_2 = self.critic.Q2(states, actions) - target_2.detach()
+        critic_q2_loss = (weights * td_error_2 ** 2).mean()
         # optimize critic Q2
         self.critic_q2_optimizer.zero_grad()
         critic_q2_loss.backward()
