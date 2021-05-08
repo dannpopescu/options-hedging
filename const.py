@@ -12,5 +12,5 @@ DELTA = "options.delta"
 TTM = "time.to.maturity"
 DONE = "done.flag"
 
-LEAVE_PRINT_EVERY_N_SECS = 300
+LEAVE_PRINT_EVERY_N_SECS = 15
 ERASE_LINE = '\033[K'

@@ -1,15 +1,18 @@
 import gc
 import copy
+import os
 import random
 import time
 from itertools import count
 
 import numpy as np
+import pandas as pd
 import torch
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
 
 from actor import Actor
+from buffer import ReplayBuffer
 from critic import Critic
 from env import HedgingEnv
 from const import LEAVE_PRINT_EVERY_N_SECS, ERASE_LINE
@@ -74,7 +77,7 @@ class DDPG():
                                                 initial_p=0.4)
 
         # Training strategy
-        self.training_strategy = EGreedyExpStrategy(init_epsilon=1,
+        self.training_strategy = EGreedyExpStrategy(epsilon=1,
                                                     min_epsilon=0.1,
                                                     epsilon_decay=0.9999)
         self.evaluation_strategy = GreedyStrategy()
@@ -86,6 +89,10 @@ class DDPG():
         self.total_optimizations = 0
         self.total_steps = 0
         self.total_ev_interactions = 0
+
+        self.q1_loss = []
+        self.q2_loss = []
+        self.actor_loss = []
 
     def optimize_model(self, experiences, weights, idxs):
         self.total_optimizations += 1
@@ -131,8 +138,11 @@ class DDPG():
         priorities = (np.abs(td_error_2.detach().cpu().numpy()) + 1e-10).flatten()  # 1e-10 to avoid zero priority
         self.replay_buffer.update_priorities(idxs, priorities)
 
-        self.writer.add_scalar("critic_q1_loss", critic_q1_loss.detach().cpu().numpy(), self.total_optimizations)
-        self.writer.add_scalar("critic_q2_loss", critic_q2_loss.detach().cpu().numpy(), self.total_optimizations)
+        self.q1_loss.append(td_error_1.detach().pow(2).cpu().numpy().mean())
+        self.q2_loss.append(td_error_2.detach().pow(2).cpu().numpy().mean())
+
+        # self.writer.add_scalar("critic_q1_loss", critic_q1_loss.detach().cpu().numpy(), self.total_optimizations)
+        # self.writer.add_scalar("critic_q2_loss", critic_q2_loss.detach().cpu().numpy(), self.total_optimizations)
 
     def optimize_actor(self, experiences):
         states, actions, rewards, next_states, is_terminals = experiences
@@ -147,7 +157,9 @@ class DDPG():
                                        self.actor_max_grad_norm)
         self.actor_optimizer.step()
 
-        self.writer.add_scalar("actor_loss", actor_loss.detach().cpu().numpy(), self.total_optimizations)
+        self.actor_loss.append(float(actor_loss.detach().cpu()))
+
+        # self.writer.add_scalar("actor_loss", actor_loss.detach().cpu().numpy(), self.total_optimizations)
 
     def interaction_step(self, state):
         self.total_steps += 1
@@ -218,41 +230,52 @@ class DDPG():
             training_time += episode_elapsed
             wallclock_elapsed = time.time() - training_start
 
-            # reward
-            mean_10_reward = np.mean(self.episode_reward[-10:])
-            std_10_reward = np.std(self.episode_reward[-10:])
-            mean_100_reward = np.mean(self.episode_reward[-100:])
-            std_100_reward = np.std(self.episode_reward[-100:])
-
-            # exploration rate
-            lst_100_exp_rat = np.array(self.episode_exploration[-100:]) / self.path_length
-            mean_100_exp_rat = np.mean(lst_100_exp_rat)
-            std_100_exp_rat = np.std(lst_100_exp_rat)
-
-            # tensorboard metrics
-            self.writer.add_scalar("epsilon", self.training_strategy.epsilon, episode)
-
-            if episode % 10 == 0 and episode != 0:
-                self.evaluate(self.actor, self.env)
-
-            result[episode-1] = mean_100_reward, mean_100_exp_rat, training_time, wallclock_elapsed
-
             reached_debug_time = time.time() - last_debug_time >= LEAVE_PRINT_EVERY_N_SECS
 
-            elapsed_str = time.strftime("%H:%M:%S", time.gmtime(time.time() - training_start))
-            debug_message = 'el {}, ep {:04}, '
-            debug_message += 'ar 10 {:05.1f}\u00B1{:05.1f}, '
-            debug_message += '100 {:05.1f}\u00B1{:05.1f}, '
-            debug_message += 'ex 100 {:02.1f}\u00B1{:02.1f}, '
-            debug_message = debug_message.format(
-                elapsed_str, episode-1,
-                mean_10_reward, std_10_reward,
-                mean_100_reward, std_100_reward,
-                mean_100_exp_rat, std_100_exp_rat)
-            print(debug_message, end='\r', flush=True)
-            if reached_debug_time or episode >= episodes:
-                print(ERASE_LINE + debug_message, flush=True)
-                last_debug_time = time.time()
+            if len(self.q1_loss) >= 100:
+                elapsed_str = time.strftime("%H:%M:%S", time.gmtime(time.time() - training_start))
+                msg = 'el {}, ep {:>5}, Q1 lst {:>5.0f}, 100 {:>5.0f}\u00B1{:04.0f}, ' \
+                      + 'Q2 lst {:>10.0f}, 100 {:>10.0f}\u00B1{:09.0f}, ' \
+                      + 'A lst {:05.1f}, 100 {:05.1f}\u00B1{:05.1f}'
+                msg = msg.format(
+                    elapsed_str, episode,
+                    self.q1_loss[-1], np.mean(self.q1_loss[-100:]), np.std(self.q1_loss[-100:]),
+                    self.q2_loss[-1], np.mean(self.q2_loss[-100:]), np.std(self.q2_loss[-100:]),
+                    self.actor_loss[-1], np.mean(self.actor_loss[-100:]), np.std(self.actor_loss[-100:]))
+                print(msg, end='\r', flush=True)
+                if reached_debug_time or episode >= episodes:
+                    print(ERASE_LINE + msg, flush=True)
+                    last_debug_time = time.time()
+
+            if episode % 50 == 0:
+                hist = {
+                    "episode": [episode],
+                    "last_q1_loss": [self.q1_loss[-1]],
+                    "last_q2_loss": [self.q2_loss[-1]],
+                    "last_actor_loss": [self.actor_loss[-1]],
+                    "mean_q1_loss": [np.mean(self.q1_loss)],
+                    "std_q1_loss": [np.std(self.q1_loss)],
+                    "mean_q2_loss": [np.mean(self.q2_loss)],
+                    "std_q2_loss": [np.std(self.q2_loss)],
+                    "mean_actor_loss": [np.mean(self.actor_loss)],
+                    "std_actor_loss": [np.std(self.actor_loss)],
+                }
+                hist_path = "history/metrics_hist.csv"
+                if not os.path.exists(hist_path):
+                    pd.DataFrame.from_dict(hist).to_csv(hist_path, index=False, encoding='utf-8')
+                else:
+                    pd.DataFrame.from_dict(hist).to_csv(hist_path, mode='a', index=False, header=False, encoding='utf-8')
+
+                if episode % 1000 == 0:
+                    self.q1_loss = self.q1_loss[-100:]
+                    self.q2_loss = self.q2_loss[-100:]
+                    self.actor_loss = self.actor_loss[-100:]
+
+            # tensorboard metrics
+            # self.writer.add_scalar("epsilon", self.training_strategy.epsilon, episode)
+
+            # if episode % 10 == 0 and episode != 0:
+                # self.evaluate(self.actor, self.env)
 
             if episode % 1000 == 0:
                 filename = 'model/ddpg_' + str(int(episode / 1000)) + ".pt"
