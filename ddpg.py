@@ -163,20 +163,14 @@ class DDPG():
 
         return new_state, is_terminal
 
-    def update_networks(self, tau=None):
-        if tau is None:
-            tau = self.tau
-        self.mix_weights(tau, self.critic_target.q1, self.critic.q1)
-        self.mix_weights(tau, self.critic_target.q2, self.critic.q2)
-        self.mix_weights(tau, self.actor_target, self.actor)
+    def update_networks(self):
+        self.mix_weights(target_model=self.critic_target.q1, online_model=self.critic.q1)
+        self.mix_weights(target_model=self.critic_target.q2, online_model=self.critic.q2)
+        self.mix_weights(target_model=self.actor_target, online_model=self.actor)
 
-    def mix_weights(self, tau, target_model, online_model):
-        for target, online in zip(target_model.parameters(),
-                                  online_model.parameters()):
-            target_ratio = (1.0 - tau) * target.data
-            online_ratio = tau * online.data
-            mixed_weights = target_ratio + online_ratio
-            target.data.copy_(mixed_weights)
+    def mix_weights(self, target_model, online_model):
+        for target_param, online_param in zip(target_model.parameters(), online_model.parameters()):
+            target_param.data.copy_(self.tau * online_param.data + (1 - self.tau) * target_param.data)
 
     def train(self, episodes):
         training_start, last_debug_time = time.time(), float('-inf')
