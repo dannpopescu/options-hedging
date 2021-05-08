@@ -94,6 +94,12 @@ class DDPG():
         self.q2_loss = []
         self.actor_loss = []
 
+        self.mean_a_grad = 0
+        self.std_a_grad = 0
+
+        self.mean_weights = 0
+        self.std_weights = 0
+
     def optimize_model(self, experiences, weights, idxs):
         self.total_optimizations += 1
         self.optimize_critic(experiences, weights, idxs)
@@ -148,6 +154,8 @@ class DDPG():
         states, actions, rewards, next_states, is_terminals = experiences
 
         chosen_actions = self.actor(states)
+        chosen_actions.retain_grad()
+
         expected_reward = self.critic(states, chosen_actions)
         actor_loss = -expected_reward.mean()
 
@@ -157,6 +165,8 @@ class DDPG():
                                        self.actor_max_grad_norm)
         self.actor_optimizer.step()
 
+        self.mean_a_grad = np.mean(chosen_actions.grad)
+        self.std_a_grad = np.std(chosen_actions.grad)
         self.actor_loss.append(float(actor_loss.detach().cpu()))
 
         # self.writer.add_scalar("actor_loss", actor_loss.detach().cpu().numpy(), self.total_optimizations)
@@ -210,6 +220,10 @@ class DDPG():
                 if len(self.replay_buffer) > self.batch_size:
                     *experiences, weights, idxs = self.replay_buffer.sample(self.batch_size,
                                                                             beta=self.per_beta_schedule.value(episode))
+
+                    self.mean_weights = np.mean(weights)
+                    self.std_weights = np.std(weights)
+
                     experiences = self.critic.load(experiences)
                     self.optimize_model(experiences, weights, idxs)
 
@@ -247,29 +261,33 @@ class DDPG():
                     print(ERASE_LINE + msg, flush=True)
                     last_debug_time = time.time()
 
-            if episode % 50 == 0:
-                hist = {
-                    "episode": [episode],
-                    "last_q1_loss": [self.q1_loss[-1]],
-                    "last_q2_loss": [self.q2_loss[-1]],
-                    "last_actor_loss": [self.actor_loss[-1]],
-                    "mean_q1_loss": [np.mean(self.q1_loss)],
-                    "std_q1_loss": [np.std(self.q1_loss)],
-                    "mean_q2_loss": [np.mean(self.q2_loss)],
-                    "std_q2_loss": [np.std(self.q2_loss)],
-                    "mean_actor_loss": [np.mean(self.actor_loss)],
-                    "std_actor_loss": [np.std(self.actor_loss)],
-                }
-                hist_path = "history/metrics_hist.csv"
-                if not os.path.exists(hist_path):
-                    pd.DataFrame.from_dict(hist).to_csv(hist_path, index=False, encoding='utf-8')
-                else:
-                    pd.DataFrame.from_dict(hist).to_csv(hist_path, mode='a', index=False, header=False, encoding='utf-8')
+                if episode % 50 == 0:
+                    hist = {
+                        "episode": [episode],
+                        "last_q1_loss": [self.q1_loss[-1]],
+                        "mean_q1_loss": [np.mean(self.q1_loss)],
+                        "std_q1_loss": [np.std(self.q1_loss)],
+                        "last_q2_loss": [self.q2_loss[-1]],
+                        "mean_q2_loss": [np.mean(self.q2_loss)],
+                        "std_q2_loss": [np.std(self.q2_loss)],
+                        "last_actor_loss": [self.actor_loss[-1]],
+                        "mean_actor_loss": [np.mean(self.actor_loss)],
+                        "std_actor_loss": [np.std(self.actor_loss)],
+                        "mean_weights": [self.mean_weights],
+                        "std_weights": [self.std_weights],
+                        "mean_a_grad": [self.mean_a_grad],
+                        "std_a_grad": [self.std_a_grad],
+                    }
+                    hist_path = "history/metrics_hist.csv"
+                    if not os.path.exists(hist_path):
+                        pd.DataFrame.from_dict(hist).to_csv(hist_path, index=False, encoding='utf-8')
+                    else:
+                        pd.DataFrame.from_dict(hist).to_csv(hist_path, mode='a', index=False, header=False, encoding='utf-8')
 
-                if episode % 1000 == 0:
-                    self.q1_loss = self.q1_loss[-100:]
-                    self.q2_loss = self.q2_loss[-100:]
-                    self.actor_loss = self.actor_loss[-100:]
+                    if episode % 300 == 0:
+                        self.q1_loss = self.q1_loss[-100:]
+                        self.q2_loss = self.q2_loss[-100:]
+                        self.actor_loss = self.actor_loss[-100:]
 
             # tensorboard metrics
             # self.writer.add_scalar("epsilon", self.training_strategy.epsilon, episode)
@@ -277,8 +295,8 @@ class DDPG():
             # if episode % 10 == 0 and episode != 0:
                 # self.evaluate(self.actor, self.env)
 
-            if episode % 1000 == 0:
-                filename = 'model/ddpg_' + str(int(episode / 1000)) + ".pt"
+            if episode % 100 == 0:
+                filename = 'model/ddpg_' + str(int(episode / 100)) + ".pt"
                 self.save(episode, filename)
 
     def save(self, episode, filename):
