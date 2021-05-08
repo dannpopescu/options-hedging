@@ -65,9 +65,9 @@ class DDPG():
         self.update_target_every_steps = 1
 
         # Optimizers
-        self.actor_optimizer = Adam(params=self.actor.parameters(), lr=1e-5)
-        self.critic_q1_optimizer = Adam(params=self.critic.q1.parameters(), lr=1e-5)
-        self.critic_q2_optimizer = Adam(params=self.critic.q2.parameters(),  lr=1e-5)
+        self.actor_optimizer = Adam(params=self.actor.parameters(), lr=1e-4, eps=1e-7)
+        self.critic_q1_optimizer = Adam(params=self.critic.q1.parameters(), lr=0.0025, eps=1e-7)
+        self.critic_q2_optimizer = Adam(params=self.critic.q2.parameters(),  lr=0.0025, eps=1e-7)
 
         # Use Prioritized Experience Replay - PER as the replay buffer
         self.replay_buffer = PrioritizedReplayBuffer(size=600_000,
