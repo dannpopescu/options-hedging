@@ -2,6 +2,12 @@ import torch
 import torch.nn as nn
 
 
+def init_weights(m):
+    if type(m) == nn.Linear:
+        torch.nn.init.xavier_uniform(m.weight)
+        m.bias.data.fill_(0)
+
+
 class Actor(nn.Module):
     def __init__(self,
                  state_dim,
@@ -23,6 +29,8 @@ class Actor(nn.Module):
             nn.Linear(hidden_dims[1], action_dim),
             nn.Sigmoid()
         )
+
+        self.nn.apply(init_weights)
 
         device = "cpu"
         if torch.cuda.is_available():

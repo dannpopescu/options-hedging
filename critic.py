@@ -2,6 +2,12 @@ import torch
 import torch.nn as nn
 
 
+def init_weights(m):
+    if type(m) == nn.Linear:
+        torch.nn.init.xavier_uniform(m.weight)
+        m.bias.data.fill_(0)
+
+
 class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
@@ -70,6 +76,8 @@ class Q(nn.Module):
                 modules.append(nn.BatchNorm1d(dims[i], momentum=0.01))
 
         self.nn = nn.Sequential(*modules)
+
+        self.nn.apply(init_weights)
 
         device = "cpu"
         if torch.cuda.is_available():
